@@ -596,8 +596,8 @@ void OnChartEvent(const int id,
          return;
       }
 
-      // Mode Toggle Button Click
-      if(sparam == "SymMaster_ModeToggle")
+      // Mode Toggle Button Click (accept clicks on both background and label)
+      if(sparam == "SymMaster_ModeToggle" || sparam == "SymMaster_ModeToggleBG")
       {
          // Toggle the mode
          g_MultiSymbolMode = !g_MultiSymbolMode;
@@ -2017,7 +2017,7 @@ void CreateDashboard()
    ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BORDER_COLOR, clrGray);
 
    // === MODE TOGGLE (Clickable label - DIFFERENT style than buttons) ===
-   // Background rectangle
+   // Background rectangle (CLICKABLE)
    ObjectCreate(0, "SymMaster_ModeToggleBG", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_XDISTANCE, DashboardXPos + 270);
@@ -2029,6 +2029,8 @@ void CreateDashboard()
    ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_COLOR, clrGold);
    ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_WIDTH, 3);
    ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_BACK, false);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_SELECTABLE, true);  // Make clickable
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_SELECTED, false);
 
    // Clickable text label on top
    ObjectCreate(0, "SymMaster_ModeToggle", OBJ_LABEL, 0, 0, 0);
