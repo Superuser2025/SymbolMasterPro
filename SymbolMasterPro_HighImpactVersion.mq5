@@ -3602,6 +3602,9 @@ void CreateDashboard()
    // Create feature control panel
    CreateFeatureControlPanel();
 
+   // Create live status display
+   CreateFeatureStatusDisplay();
+
    ChartRedraw();
 }
 
@@ -3740,6 +3743,224 @@ void UpdateFeatureButton(string name, bool isEnabled)
 }
 
 //+------------------------------------------------------------------+
+//| Create Feature Status Display (LIVE DATA)                        |
+//+------------------------------------------------------------------+
+void CreateFeatureStatusDisplay()
+{
+   int statusX = DashboardXPos;
+   int statusY = DashboardYPos + 500;  // Below main dashboard
+   int statusWidth = 680;  // Full width to match both panels
+   int statusHeight = 180;
+
+   // Background panel
+   ObjectCreate(0, "SymMaster_StatusPanel", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_XDISTANCE, statusX);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_YDISTANCE, statusY);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_XSIZE, statusWidth);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_YSIZE, statusHeight);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_BGCOLOR, C'20,25,30');
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_COLOR, clrDodgerBlue);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, "SymMaster_StatusPanel", OBJPROP_BACK, false);
+
+   // Title
+   ObjectCreate(0, "SymMaster_StatusTitle", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, "SymMaster_StatusTitle", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "SymMaster_StatusTitle", OBJPROP_XDISTANCE, statusX + 10);
+   ObjectSetInteger(0, "SymMaster_StatusTitle", OBJPROP_YDISTANCE, statusY + 10);
+   ObjectSetString(0, "SymMaster_StatusTitle", OBJPROP_TEXT, "📊 LIVE FEATURE STATUS");
+   ObjectSetInteger(0, "SymMaster_StatusTitle", OBJPROP_COLOR, clrDodgerBlue);
+   ObjectSetInteger(0, "SymMaster_StatusTitle", OBJPROP_FONTSIZE, 11);
+   ObjectSetString(0, "SymMaster_StatusTitle", OBJPROP_FONT, "Arial Bold");
+
+   // Status labels (will be updated in UpdateFeatureStatusDisplay)
+   int labelY = statusY + 40;
+   int colWidth = 340;
+
+   // Column 1
+   CreateStatusLabel("Status_Session", statusX + 10, labelY, "Session: Checking...");
+   labelY += 25;
+   CreateStatusLabel("Status_Volatility", statusX + 10, labelY, "Volatility: Checking...");
+   labelY += 25;
+   CreateStatusLabel("Status_HTF", statusX + 10, labelY, "HTF Trend: Checking...");
+   labelY += 25;
+   CreateStatusLabel("Status_News", statusX + 10, labelY, "News: Checking...");
+   labelY += 25;
+   CreateStatusLabel("Status_SR", statusX + 10, labelY, "S/R: Checking...");
+
+   // Column 2
+   labelY = statusY + 40;
+   CreateStatusLabel("Status_SLTP", statusX + colWidth, labelY, "Last SL/TP: None");
+   labelY += 25;
+   CreateStatusLabel("Status_PosSizing", statusX + colWidth, labelY, "Position Size: Calculating...");
+   labelY += 25;
+   CreateStatusLabel("Status_WinRate", statusX + colWidth, labelY, "Win Rate: 0% (0/0)");
+   labelY += 25;
+   CreateStatusLabel("Status_TradePanel", statusX + colWidth, labelY, "Trade Panel: Ready");
+   labelY += 25;
+   CreateStatusLabel("Status_LastUpdate", statusX + colWidth, labelY, "Last Update: " + TimeToString(TimeCurrent(), TIME_MINUTES));
+}
+
+//+------------------------------------------------------------------+
+//| Create Individual Status Label                                   |
+//+------------------------------------------------------------------+
+void CreateStatusLabel(string name, int x, int y, string text)
+{
+   string objName = "SymMaster_" + name;
+
+   ObjectCreate(0, objName, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+   ObjectSetString(0, objName, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, objName, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, 9);
+}
+
+//+------------------------------------------------------------------+
+//| Update Feature Status Display (CALL THIS REGULARLY)              |
+//+------------------------------------------------------------------+
+void UpdateFeatureStatusDisplay()
+{
+   // Session Status
+   string sessionText = "Session: ";
+   if(g_Runtime_SessionFilter)
+   {
+      if(IsSessionAllowed())
+         sessionText += g_CurrentSession + " ✅";
+      else
+         sessionText += g_CurrentSession + " ❌ BLOCKED";
+   }
+   else
+      sessionText += "DISABLED";
+   ObjectSetString(0, "SymMaster_Status_Session", OBJPROP_TEXT, sessionText);
+   ObjectSetInteger(0, "SymMaster_Status_Session", OBJPROP_COLOR,
+                     (g_Runtime_SessionFilter && IsSessionAllowed()) ? clrLime : clrGray);
+
+   // Volatility Status
+   string volText = "Volatility: ";
+   if(g_Runtime_VolatilityFilter)
+   {
+      ENUM_TIMEFRAMES checkTF = PERIOD_H1;
+      for(int i = 0; i < g_ActiveTFCount; i++)
+      {
+         if(g_TFAnalysis[i].timeframe == PERIOD_H1)
+         {
+            checkTF = PERIOD_H1;
+            break;
+         }
+      }
+
+      if(PassesVolatilityFilter(checkTF))
+         volText += "GOOD ✅";
+      else
+         volText += "OUT OF RANGE ❌";
+   }
+   else
+      volText += "DISABLED";
+   ObjectSetString(0, "SymMaster_Status_Volatility", OBJPROP_TEXT, volText);
+
+   // HTF Trend Status
+   string htfText = "HTF Trend: ";
+   if(g_Runtime_HTFTrendFilter)
+   {
+      bool buyAligned = PassesHTFTrendFilter(true);
+      bool sellAligned = PassesHTFTrendFilter(false);
+
+      if(buyAligned && sellAligned)
+         htfText += "NEUTRAL";
+      else if(buyAligned)
+         htfText += "BULLISH ✅";
+      else if(sellAligned)
+         htfText += "BEARISH ✅";
+      else
+         htfText += "NOT ALIGNED ❌";
+   }
+   else
+      htfText += "DISABLED";
+   ObjectSetString(0, "SymMaster_Status_HTF", OBJPROP_TEXT, htfText);
+
+   // News Status
+   string newsText = "News: ";
+   if(g_Runtime_NewsFilter)
+   {
+      if(IsNewsEventNear())
+         newsText += "EVENT NEAR ❌ BLOCKED";
+      else
+         newsText += "CLEAR ✅";
+   }
+   else
+      newsText += "DISABLED";
+   ObjectSetString(0, "SymMaster_Status_News", OBJPROP_TEXT, newsText);
+   ObjectSetInteger(0, "SymMaster_Status_News", OBJPROP_COLOR,
+                     (g_Runtime_NewsFilter && !IsNewsEventNear()) ? clrLime : (IsNewsEventNear() ? clrRed : clrGray));
+
+   // S/R Status
+   string srText = "S/R: ";
+   if(g_Runtime_SRDetection)
+   {
+      double currentPrice = SymbolInfoDouble(g_Symbol, SYMBOL_BID);
+      bool nearSRBuy = IsNearSupportResistance(currentPrice, true);
+      bool nearSRSell = IsNearSupportResistance(currentPrice, false);
+
+      if(nearSRBuy || nearSRSell)
+         srText += "AT KEY LEVEL ✅";
+      else
+         srText += "No confluence";
+   }
+   else
+      srText += "DISABLED";
+   ObjectSetString(0, "SymMaster_Status_SR", OBJPROP_TEXT, srText);
+
+   // SL/TP Status
+   string sltpText = "Last SL/TP: ";
+   if(g_Runtime_DynamicSLTP && g_TradeParamsActive)
+      sltpText += DoubleToString(g_CurrentTradeParams.riskInPips, 1) + " pips risk";
+   else
+      sltpText += "None";
+   ObjectSetString(0, "SymMaster_Status_SLTP", OBJPROP_TEXT, sltpText);
+
+   // Position Sizing Status
+   string posText = "Position Size: ";
+   if(g_Runtime_PositionSizing)
+   {
+      if(g_TradeParamsActive)
+         posText += DoubleToString(g_CurrentTradeParams.lotSize, 2) + " lots (" + DoubleToString(RiskPercentPerTrade, 1) + "%)";
+      else
+         posText += "Ready (" + DoubleToString(RiskPercentPerTrade, 1) + "% risk)";
+   }
+   else
+      posText += "DISABLED";
+   ObjectSetString(0, "SymMaster_Status_PosSizing", OBJPROP_TEXT, posText);
+
+   // Win Rate Status
+   string winText = "Win Rate: ";
+   if(g_Runtime_WinRateTracker)
+   {
+      double winRate = g_TotalSignals > 0 ? ((double)g_WinningSignals / (double)g_TotalSignals * 100.0) : 0.0;
+      winText += DoubleToString(winRate, 1) + "% (" + IntegerToString(g_WinningSignals) + "W/" +
+                 IntegerToString(g_LosingSignals) + "L/" + IntegerToString(g_TotalSignals) + ")";
+   }
+   else
+      winText += "DISABLED";
+   ObjectSetString(0, "SymMaster_Status_WinRate", OBJPROP_TEXT, winText);
+
+   // Trade Panel Status
+   string panelText = "Trade Panel: ";
+   if(g_Runtime_TradePanel)
+      panelText += g_TradePanelVisible ? "SHOWING" : "Ready";
+   else
+      panelText += "DISABLED";
+   ObjectSetString(0, "SymMaster_Status_TradePanel", OBJPROP_TEXT, panelText);
+
+   // Update timestamp
+   ObjectSetString(0, "SymMaster_Status_LastUpdate", OBJPROP_TEXT,
+                   "Last Update: " + TimeToString(TimeCurrent(), TIME_MINUTES));
+}
+
+//+------------------------------------------------------------------+
 //| Update Dashboard                                                 |
 //+------------------------------------------------------------------+
 void UpdateDashboard()
@@ -3788,7 +4009,10 @@ void UpdateDashboard()
    {
       UpdateSignalPanel();
    }
-   
+
+   // Update feature status display (live data)
+   UpdateFeatureStatusDisplay();
+
    ChartRedraw();
 }
 
