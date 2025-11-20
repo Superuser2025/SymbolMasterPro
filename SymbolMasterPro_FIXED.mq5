@@ -480,6 +480,9 @@ void OnChartEvent(const int id,
    // Handle object click events
    if(id == CHARTEVENT_OBJECT_CLICK)
    {
+      // DEBUG: Print all clicks
+      Print(">>> CLICK DETECTED: ", sparam);
+
       // Check if toggle button clicked
       if(sparam == "SymMaster_ToggleBtn")
       {
@@ -519,6 +522,8 @@ void OnChartEvent(const int id,
       // Check if multi-symbol timeframe button clicked (multi-symbol mode)
       if(StringFind(sparam, "SymMaster_Multi_") >= 0 && StringFind(sparam, "_TF_") >= 0)
       {
+         Print(">>> Multi-symbol TF button clicked!");
+
          // Extract symbol index and timeframe index from "SymMaster_Multi_X_TF_Y"
          int multiPos = StringFind(sparam, "SymMaster_Multi_");
          int tfPos = StringFind(sparam, "_TF_");
@@ -529,8 +534,12 @@ void OnChartEvent(const int id,
          int symIdx = (int)StringToInteger(symIdxStr);
          int tfIdx = (int)StringToInteger(tfIdxStr);
 
+         Print(">>> Parsed: symIdx=", symIdx, " tfIdx=", tfIdx, " MultiSymbolCount=", g_MultiSymbolCount);
+
          if(symIdx >= 0 && symIdx < g_MultiSymbolCount && tfIdx >= 0 && tfIdx < g_ActiveTFCount)
          {
+            Print(">>> Opening mini chart for symbol: ", g_MultiSymbols[symIdx], " TF: ", g_MultiTFAnalysis[symIdx][tfIdx].tfName);
+
             // Close any open mini chart
             if(g_ActiveMiniChart >= 0)
                CloseMiniChart();
@@ -538,6 +547,10 @@ void OnChartEvent(const int id,
             // Open mini chart for this symbol and timeframe
             g_ActiveMiniChart = tfIdx;  // Store which TF is active
             CreateMiniChart(g_MultiSymbols[symIdx], g_MultiTFAnalysis[symIdx][tfIdx].timeframe, g_MultiTFAnalysis[symIdx][tfIdx].tfName, g_MultiTFAnalysis[symIdx][tfIdx]);
+         }
+         else
+         {
+            Print(">>> ERROR: Index out of bounds! symIdx=", symIdx, " tfIdx=", tfIdx);
          }
          return;
       }
@@ -625,6 +638,8 @@ void OnChartEvent(const int id,
       // Mode Toggle Button Click (accept clicks on both background and label)
       if(sparam == "SymMaster_ModeToggle" || sparam == "SymMaster_ModeToggleBG")
       {
+         Print(">>> MODE TOGGLE CLICKED! Current mode: ", g_MultiSymbolMode ? "MULTI" : "SINGLE");
+
          // Toggle the mode
          g_MultiSymbolMode = !g_MultiSymbolMode;
 
