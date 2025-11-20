@@ -307,6 +307,18 @@ int OnInit()
    if(ShowDashboard)
    {
       CreateDashboard();
+
+      // Perform initial analysis immediately
+      if(!g_MultiSymbolMode)
+      {
+         PerformMultiTimeframeAnalysis();
+         UpdateDashboard();
+      }
+      else
+      {
+         PerformMultiSymbolAnalysis();
+         UpdateMultiSymbolDashboards();
+      }
    }
    
    // Initialize active signal style from input parameter
@@ -595,10 +607,18 @@ void OnChartEvent(const int id,
          {
             CreateDashboard();  // Create base dashboard first
             CreateMultiSymbolDashboards();  // Then add multi-symbol boxes
+
+            // Perform analysis and update immediately
+            PerformMultiSymbolAnalysis();
+            UpdateMultiSymbolDashboards();
          }
          else
          {
             CreateDashboard();  // Single symbol dashboard
+
+            // Perform analysis and update immediately
+            PerformMultiTimeframeAnalysis();
+            UpdateDashboard();
          }
 
          // Update the toggle button text
