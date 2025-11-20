@@ -510,7 +510,7 @@ void OnChartEvent(const int id,
                   CloseMiniChart();
 
                g_ActiveMiniChart = tfIndex;
-               CreateMiniChart(g_Symbol, g_TFAnalysis[tfIndex].timeframe, g_TFAnalysis[tfIndex].tfName);
+               CreateMiniChart(g_Symbol, g_TFAnalysis[tfIndex].timeframe, g_TFAnalysis[tfIndex].tfName, g_TFAnalysis[tfIndex]);
             }
          }
          return;
@@ -537,7 +537,7 @@ void OnChartEvent(const int id,
 
             // Open mini chart for this symbol and timeframe
             g_ActiveMiniChart = tfIdx;  // Store which TF is active
-            CreateMiniChart(g_MultiSymbols[symIdx], g_MultiTFAnalysis[symIdx][tfIdx].timeframe, g_MultiTFAnalysis[symIdx][tfIdx].tfName);
+            CreateMiniChart(g_MultiSymbols[symIdx], g_MultiTFAnalysis[symIdx][tfIdx].timeframe, g_MultiTFAnalysis[symIdx][tfIdx].tfName, g_MultiTFAnalysis[symIdx][tfIdx]);
          }
          return;
       }
@@ -2509,7 +2509,7 @@ void UpdateSignalPanel()
 //+------------------------------------------------------------------+
 //| Create Mini Chart Window                                         |
 //+------------------------------------------------------------------+
-void CreateMiniChart(string symbol, ENUM_TIMEFRAMES timeframe, string tfName)
+void CreateMiniChart(string symbol, ENUM_TIMEFRAMES timeframe, string tfName, TimeframeAnalysis &tfAnalysis)
 {
    int miniWidth = 420;
    int miniHeight = 320;
@@ -2655,17 +2655,17 @@ void CreateMiniChart(string symbol, ENUM_TIMEFRAMES timeframe, string tfName)
    ObjectSetInteger(0, "SymMaster_MiniStats", OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, "SymMaster_MiniStats", OBJPROP_XDISTANCE, miniX + 15);
    ObjectSetInteger(0, "SymMaster_MiniStats", OBJPROP_YDISTANCE, statsY);
-   
-   string bias = g_TFAnalysis[tfIndex].bias == 1 ? "🟢 BULLISH" : 
-                 g_TFAnalysis[tfIndex].bias == -1 ? "🟢 BEARISH" : "⚪ NEUTRAL";
-   
+
+   string bias = tfAnalysis.bias == 1 ? "🟢 BULLISH" :
+                 tfAnalysis.bias == -1 ? "🔴 BEARISH" : "⚪ NEUTRAL";
+
    string stats = StringFormat("Bias: %s | Confidence: %d/10\nOB: %d Bull / %d Bear | FVG: %d Bull / %d Bear",
                                bias,
-                               g_TFAnalysis[tfIndex].confidence,
-                               g_TFAnalysis[tfIndex].bullishOBCount,
-                               g_TFAnalysis[tfIndex].bearishOBCount,
-                               g_TFAnalysis[tfIndex].bullishFVGCount,
-                               g_TFAnalysis[tfIndex].bearishFVGCount);
+                               tfAnalysis.confidence,
+                               tfAnalysis.bullishOBCount,
+                               tfAnalysis.bearishOBCount,
+                               tfAnalysis.bullishFVGCount,
+                               tfAnalysis.bearishFVGCount);
    
    ObjectSetString(0, "SymMaster_MiniStats", OBJPROP_TEXT, stats);
    ObjectSetInteger(0, "SymMaster_MiniStats", OBJPROP_COLOR, clrWhite);
