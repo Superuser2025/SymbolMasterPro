@@ -570,6 +570,10 @@ void OnChartEvent(const int id,
       // Check if mini chart close button clicked
       if(sparam == "SymMaster_MiniClose")
       {
+         // CRITICAL: Deselect button immediately
+         ObjectSetInteger(0, "SymMaster_MiniClose", OBJPROP_STATE, false);
+
+         Print(">>> Closing mini chart");
          CloseMiniChart();
          return;
       }
@@ -733,6 +737,31 @@ void OnChartEvent(const int id,
          }
          else
          {
+            // SWITCHING TO SINGLE MODE - Release multi-symbol resources to save CPU/memory
+            Print(">>> Releasing multi-symbol resources to optimize single-symbol mode");
+
+            // Release all indicator handles for multi-symbols
+            for(int symIdx = 0; symIdx < g_MultiSymbolCount; symIdx++)
+            {
+               for(int i = 0; i < g_ActiveTFCount; i++)
+               {
+                  if(g_MultiTrendMA_Handles[symIdx][i] != INVALID_HANDLE)
+                  {
+                     IndicatorRelease(g_MultiTrendMA_Handles[symIdx][i]);
+                     g_MultiTrendMA_Handles[symIdx][i] = INVALID_HANDLE;
+                  }
+                  if(g_MultiATR_Handles[symIdx][i] != INVALID_HANDLE)
+                  {
+                     IndicatorRelease(g_MultiATR_Handles[symIdx][i]);
+                     g_MultiATR_Handles[symIdx][i] = INVALID_HANDLE;
+                  }
+               }
+            }
+
+            // Reset multi-symbol count to free memory
+            g_MultiSymbolCount = 0;
+            Print(">>> Multi-symbol resources released. Single-symbol mode optimized.");
+
             CreateDashboard();  // Single symbol dashboard
 
             // Perform analysis and update immediately
@@ -2559,6 +2588,9 @@ void UpdateSignalPanel()
 //+------------------------------------------------------------------+
 void CreateMiniChart(string symbol, ENUM_TIMEFRAMES timeframe, string tfName, TimeframeAnalysis &tfAnalysis)
 {
+   uint startTime = GetTickCount();  // Performance timing
+   Print(">>> [PERF] Starting mini chart creation for ", symbol, " ", tfName);
+
    int miniWidth = 420;
    int miniHeight = 320;
    int miniX = DashboardXPos + 400;
@@ -2602,18 +2634,29 @@ void CreateMiniChart(string symbol, ENUM_TIMEFRAMES timeframe, string tfName, Ti
    ObjectSetInteger(0, "SymMaster_MiniClose", OBJPROP_BGCOLOR, clrDarkRed);
    ObjectSetInteger(0, "SymMaster_MiniClose", OBJPROP_BORDER_COLOR, clrRed);
 
-   // Get price data for the timeframe
+   uint afterUI = GetTickCount();
+   Print(">>> [PERF] UI created in ", (afterUI - startTime), "ms");
+
+   // Get price data for the timeframe - OPTIMIZED: Reduced from 30 to 20 bars
    double open[], high[], low[], close[];
    ArraySetAsSeries(open, true);
    ArraySetAsSeries(high, true);
    ArraySetAsSeries(low, true);
    ArraySetAsSeries(close, true);
 
-   int bars = 30;
-   CopyOpen(symbol, timeframe, 0, bars, open);
+   int bars = 20;  // OPTIMIZED: Reduced from 30 to 20 bars (20 bars = 60 objects vs 30 bars = 90 objects)
+   int copied = CopyOpen(symbol, timeframe, 0, bars, open);
+   if(copied <= 0)
+   {
+      Print(">>> [ERROR] Failed to copy OHLC data for ", symbol, " ", tfName);
+      return;
+   }
    CopyHigh(symbol, timeframe, 0, bars, high);
    CopyLow(symbol, timeframe, 0, bars, low);
    CopyClose(symbol, timeframe, 0, bars, close);
+
+   uint afterData = GetTickCount();
+   Print(">>> [PERF] Data fetched in ", (afterData - afterUI), "ms (", bars, " bars)");
    
    // Find price range
    double maxPrice = high[0];
@@ -2718,7 +2761,10 @@ void CreateMiniChart(string symbol, ENUM_TIMEFRAMES timeframe, string tfName, Ti
    ObjectSetString(0, "SymMaster_MiniStats", OBJPROP_TEXT, stats);
    ObjectSetInteger(0, "SymMaster_MiniStats", OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, "SymMaster_MiniStats", OBJPROP_FONTSIZE, 9);
-   
+
+   uint endTime = GetTickCount();
+   Print(">>> [PERF] TOTAL mini chart creation time: ", (endTime - startTime), "ms");
+
    ChartRedraw();
 }
 
@@ -2733,7 +2779,8 @@ void CloseMiniChart()
    ObjectDelete(0, "SymMaster_MiniStats");
 
    // Delete all enhanced candle objects (body + upper and lower wicks)
-   for(int i = 0; i < 50; i++)
+   // OPTIMIZED: Only delete 25 candles (was 50) since we only create 20
+   for(int i = 0; i < 25; i++)
    {
       ObjectDelete(0, "SymMaster_MiniCandle_" + IntegerToString(i) + "_wick");
       ObjectDelete(0, "SymMaster_MiniCandle_" + IntegerToString(i) + "_wick_upper");
