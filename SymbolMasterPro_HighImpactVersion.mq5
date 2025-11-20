@@ -390,7 +390,17 @@ datetime g_MultiLastSignalTime[MAX_MULTI_SYMBOLS];
 // FEATURE #1: Dynamic SL/TP Global Variables
 TradeParameters g_CurrentTradeParams;
 bool g_TradeParamsActive = false;
-int g_ADX_Handle = INVALID_HANDLE;  // For Feature #6 (will be used later)
+
+// FEATURE #3: Win Rate Tracker Global Variables
+int g_TotalSignals = 0;
+int g_WinningSignals = 0;
+int g_LosingSignals = 0;
+
+// FEATURE #4: Session Filter Global Variables
+string g_CurrentSession = "NONE";
+
+// FEATURE #6: Volatility Filter Global Variables
+int g_ADX_Handle = INVALID_HANDLE;
 
 // FEATURE #10: Trade Panel Global Variables
 bool g_TradePanelVisible = false;
@@ -1539,6 +1549,295 @@ bool ExecuteTrade(TradeParameters &params)
 }
 
 //+------------------------------------------------------------------+
+//| PHASE 2: SESSION + VOLATILITY + HTF FILTERS - IMPLEMENTATION     |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| FEATURE #4: Check if Current Session is Allowed                  |
+//+------------------------------------------------------------------+
+bool IsSessionAllowed()
+{
+   if(!EnableSessionFilter) return true;
+
+   MqlDateTime dt;
+   TimeToStruct(TimeGMT(), dt);
+   int hourGMT = dt.hour;
+
+   g_CurrentSession = "NONE";
+
+   // London Session: 07:00-16:00 GMT
+   bool isLondon = (hourGMT >= 7 && hourGMT < 16);
+
+   // NY Session: 12:00-21:00 GMT
+   bool isNY = (hourGMT >= 12 && hourGMT < 21);
+
+   // Asian Session: 00:00-09:00 GMT
+   bool isAsian = (hourGMT >= 0 && hourGMT < 9);
+
+   // London/NY Overlap: 12:00-16:00 GMT
+   bool isOverlap = (hourGMT >= 12 && hourGMT < 16);
+
+   // Determine current session
+   if(isOverlap) g_CurrentSession = "OVERLAP";
+   else if(isLondon) g_CurrentSession = "LONDON";
+   else if(isNY) g_CurrentSession = "NY";
+   else if(isAsian) g_CurrentSession = "ASIAN";
+
+   // Check if overlap is required
+   if(RequireLondonNYOverlap)
+   {
+      return isOverlap;
+   }
+
+   // Check allowed sessions
+   if(TradeLondonSession && isLondon) return true;
+   if(TradeNYSession && isNY) return true;
+   if(TradeAsianSession && isAsian) return true;
+
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| FEATURE #6: Check Volatility Filter (ADX + ATR)                  |
+//+------------------------------------------------------------------+
+bool PassesVolatilityFilter(ENUM_TIMEFRAMES timeframe)
+{
+   if(!EnableVolatilityFilter) return true;
+
+   // Get ADX
+   double adx[];
+   ArraySetAsSeries(adx, true);
+
+   int adxHandle = iADX(g_Symbol, timeframe, 14);
+   if(adxHandle == INVALID_HANDLE) return true;  // Pass if can't calculate
+
+   if(CopyBuffer(adxHandle, 0, 0, 1, adx) > 0)
+   {
+      double adxValue = adx[0];
+
+      if(adxValue < MinADXValue || adxValue > MaxADXValue)
+      {
+         IndicatorRelease(adxHandle);
+         Print(">>> VOLATILITY FILTER FAILED: ADX=", DoubleToString(adxValue, 1), " (Range: ", MinADXValue, "-", MaxADXValue, ")");
+         return false;
+      }
+   }
+   IndicatorRelease(adxHandle);
+
+   // Get ATR ratio
+   double atr[];
+   ArraySetAsSeries(atr, true);
+
+   int atrHandle = iATR(g_Symbol, timeframe, 14);
+   if(atrHandle == INVALID_HANDLE) return true;
+
+   if(CopyBuffer(atrHandle, 0, 0, 50, atr) > 0)
+   {
+      double currentATR = atr[0];
+      double avgATR = 0;
+      for(int i = 0; i < 50; i++) avgATR += atr[i];
+      avgATR /= 50;
+
+      double atrRatio = avgATR > 0 ? (currentATR / avgATR) : 1.0;
+
+      if(atrRatio < MinATRRatio || atrRatio > MaxATRRatio)
+      {
+         IndicatorRelease(atrHandle);
+         Print(">>> VOLATILITY FILTER FAILED: ATR Ratio=", DoubleToString(atrRatio, 2), " (Range: ", MinATRRatio, "-", MaxATRRatio, ")");
+         return false;
+      }
+   }
+   IndicatorRelease(atrHandle);
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| FEATURE #7: Check Higher Timeframe Trend Alignment               |
+//+------------------------------------------------------------------+
+bool PassesHTFTrendFilter(bool isBuySignal)
+{
+   if(!EnableHTFTrendFilter) return true;
+
+   int htfAligned = 0;
+   int htfTotal = 0;
+
+   // Check H4 if required
+   if(RequireH4Alignment)
+   {
+      for(int i = 0; i < g_ActiveTFCount; i++)
+      {
+         if(g_TFAnalysis[i].timeframe == PERIOD_H4)
+         {
+            htfTotal++;
+            if((isBuySignal && g_TFAnalysis[i].isBullish) || (!isBuySignal && g_TFAnalysis[i].isBearish))
+            {
+               htfAligned++;
+            }
+            break;
+         }
+      }
+   }
+
+   // Check D1 if required
+   if(RequireD1Alignment)
+   {
+      for(int i = 0; i < g_ActiveTFCount; i++)
+      {
+         if(g_TFAnalysis[i].timeframe == PERIOD_D1)
+         {
+            htfTotal++;
+            if((isBuySignal && g_TFAnalysis[i].isBullish) || (!isBuySignal && g_TFAnalysis[i].isBearish))
+            {
+               htfAligned++;
+            }
+            break;
+         }
+      }
+   }
+
+   // If require all TFs aligned
+   if(RequireAllTFsAligned && htfAligned < htfTotal)
+   {
+      Print(">>> HTF TREND FILTER FAILED: ", htfAligned, "/", htfTotal, " HTFs aligned");
+      return false;
+   }
+
+   // Check minimum HTF confidence (out of 10)
+   int confidence = htfTotal > 0 ? (int)((double)htfAligned / (double)htfTotal * 10.0) : 10;
+   if(confidence < MinHTFConfidence)
+   {
+      Print(">>> HTF TREND FILTER FAILED: Confidence=", confidence, "/10 (Min: ", MinHTFConfidence, ")");
+      return false;
+   }
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| PHASE 3: S/R + TRAILING + PERFORMANCE - IMPLEMENTATION           |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| FEATURE #8: Check Support/Resistance Confluence                  |
+//+------------------------------------------------------------------+
+bool IsNearSupportResistance(double price, bool isBuySignal)
+{
+   if(!EnableSRDetection) return true;  // Pass if disabled
+   if(!RequireSRConfluence) return true;  // Pass if not required
+
+   double zonePips = SRZoneThicknessPips * _Point * 10;
+   bool nearSR = false;
+
+   // Check swing points
+   if(DetectSwingPoints)
+   {
+      double high[], low[];
+      ArraySetAsSeries(high, true);
+      ArraySetAsSeries(low, true);
+
+      if(CopyHigh(g_Symbol, PERIOD_H4, 0, SRLookbackBars, high) > 0 &&
+         CopyLow(g_Symbol, PERIOD_H4, 0, SRLookbackBars, low) > 0)
+      {
+         for(int i = 5; i < SRLookbackBars - 5; i++)
+         {
+            // Check swing high (resistance)
+            if(high[i] > high[i-1] && high[i] > high[i+1] && high[i] > high[i-2] && high[i] > high[i+2])
+            {
+               if(MathAbs(price - high[i]) <= zonePips)
+               {
+                  if(isBuySignal) nearSR = true;  // BUY near resistance = good
+               }
+            }
+
+            // Check swing low (support)
+            if(low[i] < low[i-1] && low[i] < low[i+1] && low[i] < low[i-2] && low[i] < low[i+2])
+            {
+               if(MathAbs(price - low[i]) <= zonePips)
+               {
+                  if(!isBuySignal) nearSR = true;  // SELL near support = good
+               }
+            }
+         }
+      }
+   }
+
+   // Check round numbers
+   if(DetectRoundNumbers)
+   {
+      double digits = _Digits == 3 || _Digits == 5 ? 3 : 2;
+      double roundLevel = MathRound(price * MathPow(10, digits - 2)) / MathPow(10, digits - 2);
+
+      if(MathAbs(price - roundLevel) <= zonePips)
+      {
+         nearSR = true;
+      }
+   }
+
+   return nearSR;
+}
+
+//+------------------------------------------------------------------+
+//| FEATURE #3: Update Performance Statistics                        |
+//+------------------------------------------------------------------+
+void UpdatePerformanceStats(bool signalWon)
+{
+   if(!EnablePerformanceTracking) return;
+
+   g_TotalSignals++;
+
+   if(signalWon)
+      g_WinningSignals++;
+   else
+      g_LosingSignals++;
+
+   double winRate = g_TotalSignals > 0 ? ((double)g_WinningSignals / (double)g_TotalSignals * 100.0) : 0.0;
+
+   Print(">>> PERFORMANCE UPDATE: Win Rate = ", DoubleToString(winRate, 1), "% (", g_WinningSignals, "W / ", g_LosingSignals, "L / ", g_TotalSignals, " Total)");
+}
+
+//+------------------------------------------------------------------+
+//| PHASE 4: NEWS BLOCKER - IMPLEMENTATION                           |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| FEATURE #5: Check if News Event is Near                          |
+//+------------------------------------------------------------------+
+bool IsNewsEventNear()
+{
+   if(!EnableNewsFilter) return false;
+
+   // Simple time-based news blocker
+   // Blocks trading during typical high-impact news times
+   MqlDateTime dt;
+   TimeToStruct(TimeGMT(), dt);
+   int hourGMT = dt.hour;
+   int minuteGMT = dt.min;
+   int totalMinutes = hourGMT * 60 + minuteGMT;
+
+   // Common high-impact news times (GMT)
+   // 08:30 GMT (US Economic Data)
+   // 12:30 GMT (US Economic Data)
+   // 14:00 GMT (Fed Announcements)
+   // 18:00 GMT (FOMC Minutes)
+
+   int newsTime830 = 8 * 60 + 30;
+   int newsTime1230 = 12 * 60 + 30;
+   int newsTime1400 = 14 * 60;
+   int newsTime1800 = 18 * 60;
+
+   int buffer = NewsBufferMinutesBefore + NewsBufferMinutesAfter;
+
+   // Check if near any news time
+   if(MathAbs(totalMinutes - newsTime830) <= buffer) return true;
+   if(MathAbs(totalMinutes - newsTime1230) <= buffer) return true;
+   if(MathAbs(totalMinutes - newsTime1400) <= buffer) return true;
+   if(MathAbs(totalMinutes - newsTime1800) <= buffer) return true;
+
+   return false;
+}
+
+//+------------------------------------------------------------------+
 //| Perform Multi-Timeframe Analysis                                 |
 //+------------------------------------------------------------------+
 void PerformMultiTimeframeAnalysis()
@@ -2386,10 +2685,63 @@ void DrawSignalArrow()
 }
 
 //+------------------------------------------------------------------+
-//| Apply Edge Filters                                               |
+//| Apply Edge Filters (ENHANCED WITH ALL PHASES 2-4)                |
 //+------------------------------------------------------------------+
 bool ApplyEdgeFilters(bool isBuy, int weightedScore)
 {
+   Print(">>> APPLYING ALL FILTERS...");
+
+   // ===== PHASE 4: NEWS FILTER =====
+   if(IsNewsEventNear())
+   {
+      Print(">>> ❌ FILTER FAILED: News Event Near");
+      return false;
+   }
+
+   // ===== PHASE 2: SESSION FILTER =====
+   if(!IsSessionAllowed())
+   {
+      Print(">>> ❌ FILTER FAILED: Outside Allowed Trading Session (Current: ", g_CurrentSession, ")");
+      return false;
+   }
+
+   // ===== PHASE 2: VOLATILITY FILTER =====
+   ENUM_TIMEFRAMES filterTF = PERIOD_H1;  // Use H1 for filter checks
+   for(int i = 0; i < g_ActiveTFCount; i++)
+   {
+      if(g_TFAnalysis[i].timeframe == PERIOD_H1)
+      {
+         filterTF = PERIOD_H1;
+         break;
+      }
+   }
+
+   if(!PassesVolatilityFilter(filterTF))
+   {
+      Print(">>> ❌ FILTER FAILED: Volatility Out of Range");
+      return false;
+   }
+
+   // ===== PHASE 2: HTF TREND FILTER =====
+   if(!PassesHTFTrendFilter(isBuy))
+   {
+      Print(">>> ❌ FILTER FAILED: Higher Timeframe Trend Not Aligned");
+      return false;
+   }
+
+   // ===== PHASE 3: S/R CONFLUENCE CHECK =====
+   double currentPrice = SymbolInfoDouble(g_Symbol, SYMBOL_BID);
+   if(!IsNearSupportResistance(currentPrice, isBuy))
+   {
+      if(RequireSRConfluence)
+      {
+         Print(">>> ❌ FILTER FAILED: No Support/Resistance Confluence");
+         return false;
+      }
+   }
+
+   // ===== ORIGINAL FILTERS (Kept for backward compatibility) =====
+
    // Filter 1: Higher Timeframe Bias Filter
    if(UseHTFBiasFilter)
    {
@@ -2402,21 +2754,27 @@ bool ApplyEdgeFilters(bool isBuy, int weightedScore)
          if(g_TFAnalysis[i].timeframe == PERIOD_D1)
             d1Bias = g_TFAnalysis[i].bias;
       }
-      
+
       // Signal must align with HTF bias
       int requiredBias = isBuy ? 1 : -1;
       if(d1Bias != 0 && d1Bias != requiredBias)
-         return false;  // D1 against us
+      {
+         Print(">>> ❌ FILTER FAILED: HTF Bias Against Signal");
+         return false;
+      }
       if(h4Bias != 0 && h4Bias != requiredBias)
-         return false;  // H4 against us
+      {
+         Print(">>> ❌ FILTER FAILED: H4 Bias Against Signal");
+         return false;
+      }
    }
-   
-   // Filter 2: Volatility Filter using ATR
+
+   // Filter 2: Volatility Filter using ATR (Original)
    if(UseVolatilityFilter && g_ActiveTFCount > 0)
    {
       double atr[];
       ArraySetAsSeries(atr, true);
-      
+
       // Use H1 ATR as reference
       for(int i = 0; i < g_ActiveTFCount; i++)
       {
@@ -2430,64 +2788,58 @@ bool ApplyEdgeFilters(bool isBuy, int weightedScore)
                for(int j = 0; j < 20 && j < ArraySize(atr); j++)
                   avgATR += atr[j];
                avgATR /= MathMin(20, ArraySize(atr));
-               
+
                double atrRatio = currentATR / avgATR;
-               
+
                // Filter out too quiet or too choppy markets
                if(atrRatio < MinATRMultiplier || atrRatio > MaxATRMultiplier)
+               {
+                  Print(">>> ❌ FILTER FAILED: Original ATR Filter (Ratio: ", DoubleToString(atrRatio, 2), ")");
                   return false;
+               }
             }
             break;
          }
       }
    }
-   
-   // Filter 3: Session Filter
-   if(UseSessionFilter)
-   {
-      MqlDateTime dt;
-      TimeCurrent(dt);
-      int hour = dt.hour;
-      
-      // Best sessions: London (8-12 GMT) and NY (13-17 GMT)
-      // Avoid Asian session and dead hours
-      if(hour < 7 || hour > 18 || (hour >= 12 && hour <= 13))
-         return false;
-   }
-   
-   // Filter 4: Liquidity Sweep Confirmation
+
+   // Filter 3: Liquidity Sweep Confirmation
    if(UseLiquiditySweepConfirm)
    {
       // Check if price recently swept liquidity
       double high[], low[];
       ArraySetAsSeries(high, true);
       ArraySetAsSeries(low, true);
-      
+
       CopyHigh(g_Symbol, PERIOD_H1, 0, 10, high);
       CopyLow(g_Symbol, PERIOD_H1, 0, 10, low);
-      
+
       if(ArraySize(high) > 5)
       {
          double recentHigh = high[1];
          double recentLow = low[1];
-         
+
          for(int i = 2; i < 10; i++)
          {
             if(high[i] > recentHigh) recentHigh = high[i];
             if(low[i] < recentLow) recentLow = low[i];
          }
-         
+
          // For buy: should have swept lows recently
          // For sell: should have swept highs recently
          bool sweptLiquidity = false;
          if(isBuy && low[0] <= recentLow) sweptLiquidity = true;
          if(!isBuy && high[0] >= recentHigh) sweptLiquidity = true;
-         
+
          if(!sweptLiquidity)
-            return false;  // No liquidity sweep detected
+         {
+            Print(">>> ❌ FILTER FAILED: No Liquidity Sweep");
+            return false;
+         }
       }
    }
-   
+
+   Print(">>> ✅ ALL FILTERS PASSED!");
    return true;  // Passed all filters
 }
 
