@@ -610,6 +610,54 @@ void OnChartEvent(const int id,
          // Recreate dashboard in new mode
          if(g_MultiSymbolMode)
          {
+            // Initialize multi-symbol data if not already done
+            if(g_MultiSymbolCount == 0)
+            {
+               Print(">>> Initializing multi-symbol data for runtime toggle...");
+
+               // Build symbol list
+               g_MultiSymbols[0] = Symbol1;
+               g_MultiSymbols[1] = Symbol2;
+               g_MultiSymbols[2] = Symbol3;
+               g_MultiSymbols[3] = Symbol4;
+               g_MultiSymbols[4] = Symbol5;
+               g_MultiSymbols[5] = Symbol6;
+               g_MultiSymbols[6] = Symbol7;
+               g_MultiSymbols[7] = Symbol8;
+               g_MultiSymbols[8] = Symbol9;
+               g_MultiSymbols[9] = Symbol10;
+               g_MultiSymbolCount = MAX_MULTI_SYMBOLS;
+
+               // Initialize all multi-symbol data
+               for(int symIdx = 0; symIdx < g_MultiSymbolCount; symIdx++)
+               {
+                  // Initialize indicator handles for each symbol
+                  for(int i = 0; i < g_ActiveTFCount; i++)
+                  {
+                     g_MultiTrendMA_Handles[symIdx][i] = iMA(g_MultiSymbols[symIdx], g_Timeframes[i], TrendMAPeriod, 0, MODE_EMA, PRICE_CLOSE);
+                     g_MultiATR_Handles[symIdx][i] = iATR(g_MultiSymbols[symIdx], g_Timeframes[i], 14);
+
+                     if(g_MultiTrendMA_Handles[symIdx][i] == INVALID_HANDLE || g_MultiATR_Handles[symIdx][i] == INVALID_HANDLE)
+                     {
+                        Print("WARNING: Failed to create indicators for ", g_MultiSymbols[symIdx]);
+                     }
+
+                     // Initialize timeframe analysis
+                     g_MultiTFAnalysis[symIdx][i].timeframe = g_Timeframes[i];
+                     g_MultiTFAnalysis[symIdx][i].tfName = GetTimeframeName(g_Timeframes[i]);
+                     g_MultiTFAnalysis[symIdx][i].bias = 0;
+                     g_MultiTFAnalysis[symIdx][i].confidence = 0;
+                  }
+
+                  // Initialize signal tracking
+                  g_MultiSignalHistoryCount[symIdx] = 0;
+                  g_MultiSignalActive[symIdx] = false;
+                  g_MultiLastSignalTime[symIdx] = 0;
+               }
+
+               Print(">>> Multi-Symbol Mode initialized with ", g_MultiSymbolCount, " symbols");
+            }
+
             CreateDashboard();  // Create base dashboard first
             CreateMultiSymbolDashboards();  // Then add multi-symbol boxes
 
