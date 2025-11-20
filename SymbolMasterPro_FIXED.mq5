@@ -98,6 +98,9 @@ input group "=== ALERTS ==="
 input bool EnableAlerts = true;                // Enable Popup Alerts
 input bool EnablePushNotifications = false;    // Enable Push Notifications
 input bool AlertOnConfluence = true;           // Alert on High Confluence
+input bool EnableSoundAlerts = true;           // Enable Sound Alerts
+input bool ShowAlertTimestamp = true;          // Show Signal Timestamp
+input bool ShowSignalArchive = true;           // Show Signal History Panel
 
 //+------------------------------------------------------------------+
 //| STRUCTURES                                                        |
@@ -202,6 +205,11 @@ ConfluenceSignal g_CurrentSignal;
 bool g_SignalActive = false;
 ENUM_SIGNAL_STYLE g_ActiveSignalStyle = STYLE_BOX_PANEL;  // Runtime display style
 
+// SIGNAL HISTORY SYSTEM - Keep track of multiple signals
+#define MAX_SIGNAL_HISTORY 10
+ConfluenceSignal g_SignalHistory[];
+int g_SignalHistoryCount = 0;
+
 // Indicator handles for each timeframe
 int g_TrendMA_Handles[7];
 int g_ATR_Handles[7];
@@ -212,6 +220,7 @@ datetime g_LastSignalTime = 0;
 // UI State
 bool g_DashboardExpanded = true;
 int g_ActiveMiniChart = -1;  // Index of timeframe with open mini chart (-1 = none)
+bool g_ShowSignalArchive = true;  // Show signal archive panel
 
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                          |
@@ -270,9 +279,15 @@ int OnInit()
    
    // Initialize active signal style from input parameter
    g_ActiveSignalStyle = SignalDisplayStyle;
-   
+
+   // Initialize signal history array
+   ArrayResize(g_SignalHistory, MAX_SIGNAL_HISTORY);
+   g_SignalHistoryCount = 0;
+   g_ShowSignalArchive = ShowSignalArchive;
+
    Print(">>> Symbol Master Pro initialized for ", g_Symbol, " with ", g_ActiveTFCount, " timeframes");
-   
+   Print(">>> Signal History System: ENABLED (Max ", MAX_SIGNAL_HISTORY, " signals)");
+
    return(INIT_SUCCEEDED);
 }
 
@@ -402,25 +417,21 @@ void OnChartEvent(const int id,
          ObjectSetInteger(0, "SymMaster_StyleB", OBJPROP_BORDER_COLOR, clrGray);
          ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BGCOLOR, clrDarkSlateGray);
          ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BORDER_COLOR, clrGray);
-         
+
          // Update active style
          g_ActiveSignalStyle = STYLE_BOX_PANEL;
-         
-         // Redraw existing signal if active
-         if(g_SignalActive)
-         {
-            DeleteOldSignals();
-            DrawSignalBoxPanel();
-         }
-         
+
+         // Redraw ALL historical signals in new style
+         RedrawAllSignals();
+
          // Update signal panel
          UpdateSignalPanel();
          ChartRedraw();
-         
-         Print("Signal display style changed to: BOX PANEL");
+
+         Print("Signal display style changed to: BOX PANEL (showing ", g_SignalHistoryCount, " signals)");
          return;
       }
-      
+
       if(sparam == "SymMaster_StyleB")
       {
          // Update button visual states
@@ -430,25 +441,21 @@ void OnChartEvent(const int id,
          ObjectSetInteger(0, "SymMaster_StyleB", OBJPROP_BORDER_COLOR, clrLime);
          ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BGCOLOR, clrDarkSlateGray);
          ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BORDER_COLOR, clrGray);
-         
+
          // Update active style
          g_ActiveSignalStyle = STYLE_VERTICAL_ZONE;
-         
-         // Redraw existing signal if active
-         if(g_SignalActive)
-         {
-            DeleteOldSignals();
-            DrawVerticalZoneMarker();
-         }
-         
+
+         // Redraw ALL historical signals in new style
+         RedrawAllSignals();
+
          // Update signal panel
          UpdateSignalPanel();
          ChartRedraw();
-         
-         Print("Signal display style changed to: VERTICAL ZONE");
+
+         Print("Signal display style changed to: VERTICAL ZONE (showing ", g_SignalHistoryCount, " signals)");
          return;
       }
-      
+
       if(sparam == "SymMaster_StyleC")
       {
          // Update button visual states
@@ -458,22 +465,18 @@ void OnChartEvent(const int id,
          ObjectSetInteger(0, "SymMaster_StyleB", OBJPROP_BORDER_COLOR, clrGray);
          ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BGCOLOR, clrDarkGreen);
          ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BORDER_COLOR, clrLime);
-         
+
          // Update active style
          g_ActiveSignalStyle = STYLE_ADVANCED_LABEL;
-         
-         // Redraw existing signal if active
-         if(g_SignalActive)
-         {
-            DeleteOldSignals();
-            DrawAdvancedLabel();
-         }
-         
+
+         // Redraw ALL historical signals in new style
+         RedrawAllSignals();
+
          // Update signal panel
          UpdateSignalPanel();
          ChartRedraw();
-         
-         Print("Signal display style changed to: ADVANCED LABEL");
+
+         Print("Signal display style changed to: ADVANCED LABEL (showing ", g_SignalHistoryCount, " signals)");
          return;
       }
    }
@@ -923,32 +926,56 @@ void GenerateConfluenceSignal()
       g_CurrentSignal.setupDescription = "Multi-TF " + g_CurrentSignal.perspectiveText + " Setup";
       
       g_SignalActive = true;
-      
+
+      // ADD SIGNAL TO HISTORY - This ensures we don't lose signals!
+      AddSignalToHistory(g_CurrentSignal);
+
       // Alert if enabled
       if(EnableAlerts && g_LastSignalTime != g_CurrentSignal.time)
       {
          g_LastSignalTime = g_CurrentSignal.time;
-         
-         string alertMsg = StringFormat("*** %s %s [%d] on %s | Hold: %s | RR: %.1f | TFs: %s",   
+
+         // Format timestamp for display
+         string timeStr = TimeToString(g_CurrentSignal.time, TIME_DATE|TIME_MINUTES);
+
+         string alertMsg = StringFormat("🚨 %s %s SIGNAL [%d/10]\n📅 Time: %s\n📊 Symbol: %s\n⏰ Hold: %s\n💰 RR: %.1f:1\n📈 TFs: %s",
                                        g_CurrentSignal.perspectiveText,
                                        isBuySignal ? "BUY" : "SELL",
                                        confluenceScore,
+                                       timeStr,
                                        g_Symbol,
                                        g_CurrentSignal.holdTime,
                                        MinRiskReward,
                                        confirmingTFs);
-         
+
          Alert(alertMsg);
-         
+
+         // Play custom sound based on perspective
+         if(EnableSoundAlerts)
+         {
+            string soundFile = "alert.wav";  // Default
+            if(g_CurrentSignal.perspective == PERSPECTIVE_SWING)
+               soundFile = "alert2.wav";  // Higher pitch for swing
+            else if(g_CurrentSignal.perspective == PERSPECTIVE_INTRADAY)
+               soundFile = "alert.wav";  // Medium for intraday
+            else
+               soundFile = "tick.wav";  // Quick tick for scalp
+
+            PlaySound(soundFile);
+         }
+
          if(EnablePushNotifications)
             SendNotification(alertMsg);
+
+         Print(">>> NEW SIGNAL GENERATED: ", g_CurrentSignal.perspectiveText, " ",
+               isBuySignal ? "BUY" : "SELL", " at ", timeStr);
       }
-      
+
       // Draw signal on chart based on selected style
       if(DrawSignalsOnChart)
       {
-         DeleteOldSignals();  // Clean up old signals first
-         
+         DeleteOldSignals();  // Clean up signals NOT in history
+
          switch(g_ActiveSignalStyle)
          {
             case STYLE_BOX_PANEL:
@@ -1104,11 +1131,55 @@ bool ApplyEdgeFilters(bool isBuy, int weightedScore)
 }
 
 //+------------------------------------------------------------------+
-//| Delete Old Signals                                               |
+//| Add Signal to History                                            |
+//+------------------------------------------------------------------+
+void AddSignalToHistory(ConfluenceSignal &signal)
+{
+   // Check if signal already exists in history (prevent duplicates)
+   for(int i = 0; i < g_SignalHistoryCount; i++)
+   {
+      if(g_SignalHistory[i].time == signal.time)
+      {
+         // Signal already exists, update it
+         g_SignalHistory[i] = signal;
+         return;
+      }
+   }
+
+   // Add new signal to history
+   if(g_SignalHistoryCount < MAX_SIGNAL_HISTORY)
+   {
+      g_SignalHistory[g_SignalHistoryCount] = signal;
+      g_SignalHistoryCount++;
+   }
+   else
+   {
+      // History is full, shift array and add new signal
+      for(int i = 0; i < MAX_SIGNAL_HISTORY - 1; i++)
+      {
+         g_SignalHistory[i] = g_SignalHistory[i + 1];
+      }
+      g_SignalHistory[MAX_SIGNAL_HISTORY - 1] = signal;
+   }
+
+   Print(">>> Signal added to history. Total signals in history: ", g_SignalHistoryCount);
+}
+
+//+------------------------------------------------------------------+
+//| Delete Signals Older Than History Limit                         |
 //+------------------------------------------------------------------+
 void DeleteOldSignals()
 {
-   // Delete old signal objects to avoid clutter
+   // Build list of timestamps we want to keep
+   datetime keepTimes[];
+   ArrayResize(keepTimes, g_SignalHistoryCount);
+
+   for(int i = 0; i < g_SignalHistoryCount; i++)
+   {
+      keepTimes[i] = g_SignalHistory[i].time;
+   }
+
+   // Delete signal objects that are NOT in our history
    for(int i = ObjectsTotal(0) - 1; i >= 0; i--)
    {
       string name = ObjectName(0, i);
@@ -1117,7 +1188,59 @@ void DeleteOldSignals()
          StringFind(name, "SymMaster_SignalLabel") >= 0 ||
          StringFind(name, "SymMaster_Signal_") >= 0)
       {
+         // Extract timestamp from object name
+         bool shouldKeep = false;
+         for(int j = 0; j < g_SignalHistoryCount; j++)
+         {
+            string timeStr = TimeToString(keepTimes[j]);
+            if(StringFind(name, timeStr) >= 0)
+            {
+               shouldKeep = true;
+               break;
+            }
+         }
+
+         if(!shouldKeep)
+         {
+            ObjectDelete(0, name);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Redraw All Historical Signals                                    |
+//+------------------------------------------------------------------+
+void RedrawAllSignals()
+{
+   // Clear all signal objects first
+   for(int i = ObjectsTotal(0) - 1; i >= 0; i--)
+   {
+      string name = ObjectName(0, i);
+      if(StringFind(name, "SymMaster_SignalBox") >= 0 ||
+         StringFind(name, "SymMaster_SignalZone") >= 0 ||
+         StringFind(name, "SymMaster_SignalLabel") >= 0)
+      {
          ObjectDelete(0, name);
+      }
+   }
+
+   // Redraw all signals from history based on current style
+   for(int i = 0; i < g_SignalHistoryCount; i++)
+   {
+      g_CurrentSignal = g_SignalHistory[i];
+
+      switch(g_ActiveSignalStyle)
+      {
+         case STYLE_BOX_PANEL:
+            DrawSignalBoxPanel();
+            break;
+         case STYLE_VERTICAL_ZONE:
+            DrawVerticalZoneMarker();
+            break;
+         case STYLE_ADVANCED_LABEL:
+            DrawAdvancedLabel();
+            break;
       }
    }
 }
@@ -1128,44 +1251,47 @@ void DeleteOldSignals()
 void DrawSignalBoxPanel()
 {
    string baseName = "SymMaster_SignalBox_" + TimeToString(g_CurrentSignal.time);
-   
+
    // Get signal color based on perspective
    color signalColor = ScalpSignalColor;
    if(g_CurrentSignal.perspective == PERSPECTIVE_INTRADAY)
       signalColor = IntradaySignalColor;
    else if(g_CurrentSignal.perspective == PERSPECTIVE_SWING)
       signalColor = SwingSignalColor;
-   
+
    // Box background
    double boxTop = g_CurrentSignal.entryPrice + (100 * _Point);
    double boxBottom = g_CurrentSignal.entryPrice - (100 * _Point);
    datetime boxStart = g_CurrentSignal.time;
    datetime boxEnd = g_CurrentSignal.time + PeriodSeconds(PERIOD_CURRENT) * 20;
-   
+
    ObjectCreate(0, baseName + "_box", OBJ_RECTANGLE, 0, boxStart, boxTop, boxEnd, boxBottom);
    ObjectSetInteger(0, baseName + "_box", OBJPROP_COLOR, signalColor);
    ObjectSetInteger(0, baseName + "_box", OBJPROP_FILL, true);
    ObjectSetInteger(0, baseName + "_box", OBJPROP_BACK, true);
    ObjectSetInteger(0, baseName + "_box", OBJPROP_WIDTH, 2);
    ObjectSetInteger(0, baseName + "_box", OBJPROP_STYLE, STYLE_SOLID);
-   
-   // Signal text
-   string signalText = StringFormat("%s %s\n[%d] %s\nHold: %s\nRR: %.1f",
+
+   // Signal text with timestamp
+   string timeStr = ShowAlertTimestamp ? TimeToString(g_CurrentSignal.time, TIME_DATE|TIME_MINUTES) : "";
+   string signalText = StringFormat("%s %s\n[%d] %s\n%s%sHold: %s\nRR: %.1f",
                                      g_CurrentSignal.perspectiveText,
                                      g_CurrentSignal.isBuy ? "BUY" : "SELL",
                                      g_CurrentSignal.confluenceScore,
                                      g_CurrentSignal.confirmingTFs,
+                                     ShowAlertTimestamp ? "🕐 " : "",
+                                     ShowAlertTimestamp ? timeStr + "\n" : "",
                                      g_CurrentSignal.holdTime,
                                      g_CurrentSignal.riskReward);
-   
+
    ObjectCreate(0, baseName + "_text", OBJ_TEXT, 0, boxStart, g_CurrentSignal.entryPrice);
    ObjectSetString(0, baseName + "_text", OBJPROP_TEXT, signalText);
    ObjectSetInteger(0, baseName + "_text", OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, baseName + "_text", OBJPROP_FONTSIZE, SignalFontSize);
    ObjectSetString(0, baseName + "_text", OBJPROP_FONT, "Arial Bold");
-   
+
    // Entry line
-   ObjectCreate(0, baseName + "_entry", OBJ_TREND, 0, boxStart, g_CurrentSignal.entryPrice, 
+   ObjectCreate(0, baseName + "_entry", OBJ_TREND, 0, boxStart, g_CurrentSignal.entryPrice,
                 boxEnd, g_CurrentSignal.entryPrice);
    ObjectSetInteger(0, baseName + "_entry", OBJPROP_COLOR, clrYellow);
    ObjectSetInteger(0, baseName + "_entry", OBJPROP_WIDTH, 2);
@@ -1179,54 +1305,57 @@ void DrawSignalBoxPanel()
 void DrawVerticalZoneMarker()
 {
    string baseName = "SymMaster_SignalZone_" + TimeToString(g_CurrentSignal.time);
-   
+
    // Get signal color
    color signalColor = ScalpSignalColor;
    if(g_CurrentSignal.perspective == PERSPECTIVE_INTRADAY)
       signalColor = IntradaySignalColor;
    else if(g_CurrentSignal.perspective == PERSPECTIVE_SWING)
       signalColor = SwingSignalColor;
-   
+
    // Vertical line at signal time
    ObjectCreate(0, baseName + "_vline", OBJ_VLINE, 0, g_CurrentSignal.time, 0);
    ObjectSetInteger(0, baseName + "_vline", OBJPROP_COLOR, signalColor);
    ObjectSetInteger(0, baseName + "_vline", OBJPROP_WIDTH, 3);
    ObjectSetInteger(0, baseName + "_vline", OBJPROP_STYLE, STYLE_SOLID);
-   
+
    // Shaded zone from entry to TP
-   ObjectCreate(0, baseName + "_zone", OBJ_RECTANGLE, 0, 
+   ObjectCreate(0, baseName + "_zone", OBJ_RECTANGLE, 0,
                 g_CurrentSignal.time, g_CurrentSignal.entryPrice,
                 g_CurrentSignal.time + PeriodSeconds(PERIOD_CURRENT) * 30, g_CurrentSignal.takeProfit);
    ObjectSetInteger(0, baseName + "_zone", OBJPROP_COLOR, signalColor);
    ObjectSetInteger(0, baseName + "_zone", OBJPROP_FILL, true);
    ObjectSetInteger(0, baseName + "_zone", OBJPROP_BACK, true);
    ObjectSetInteger(0, baseName + "_zone", OBJPROP_WIDTH, 1);
-   
-   // Label at top
-   string labelText = StringFormat("%s %s [%d] | %s | Hold: %s",
+
+   // Label at top with timestamp
+   string timeStr = ShowAlertTimestamp ? TimeToString(g_CurrentSignal.time, TIME_DATE|TIME_MINUTES) : "";
+   string labelText = StringFormat("%s %s [%d] | %s%s%s | Hold: %s",
                                     g_CurrentSignal.perspectiveText,
                                     g_CurrentSignal.isBuy ? "BUY" : "SELL",
                                     g_CurrentSignal.confluenceScore,
                                     g_CurrentSignal.confirmingTFs,
+                                    ShowAlertTimestamp ? " | 🕐 " : "",
+                                    ShowAlertTimestamp ? timeStr : "",
                                     g_CurrentSignal.holdTime);
-   
+
    double labelPrice = g_CurrentSignal.isBuy ? g_CurrentSignal.takeProfit : g_CurrentSignal.entryPrice;
-   
+
    ObjectCreate(0, baseName + "_label", OBJ_TEXT, 0, g_CurrentSignal.time, labelPrice);
    ObjectSetString(0, baseName + "_label", OBJPROP_TEXT, labelText);
    ObjectSetInteger(0, baseName + "_label", OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, baseName + "_label", OBJPROP_FONTSIZE, SignalFontSize);
    ObjectSetString(0, baseName + "_label", OBJPROP_FONT, "Arial Bold");
-   
+
    // SL and TP lines
-   ObjectCreate(0, baseName + "_tp", OBJ_TREND, 0, 
+   ObjectCreate(0, baseName + "_tp", OBJ_TREND, 0,
                 g_CurrentSignal.time, g_CurrentSignal.takeProfit,
                 g_CurrentSignal.time + PeriodSeconds(PERIOD_CURRENT) * 30, g_CurrentSignal.takeProfit);
    ObjectSetInteger(0, baseName + "_tp", OBJPROP_COLOR, clrLime);
    ObjectSetInteger(0, baseName + "_tp", OBJPROP_WIDTH, 2);
    ObjectSetInteger(0, baseName + "_tp", OBJPROP_STYLE, STYLE_DASH);
-   
-   ObjectCreate(0, baseName + "_sl", OBJ_TREND, 0, 
+
+   ObjectCreate(0, baseName + "_sl", OBJ_TREND, 0,
                 g_CurrentSignal.time, g_CurrentSignal.stopLoss,
                 g_CurrentSignal.time + PeriodSeconds(PERIOD_CURRENT) * 30, g_CurrentSignal.stopLoss);
    ObjectSetInteger(0, baseName + "_sl", OBJPROP_COLOR, clrRed);
@@ -1240,7 +1369,7 @@ void DrawVerticalZoneMarker()
 void DrawAdvancedLabel()
 {
    string baseName = "SymMaster_SignalLabel_" + TimeToString(g_CurrentSignal.time);
-   
+
    // Get signal color
    color signalColor = ScalpSignalColor;
    color textColor = clrWhite;
@@ -1248,21 +1377,25 @@ void DrawAdvancedLabel()
       signalColor = IntradaySignalColor;
    else if(g_CurrentSignal.perspective == PERSPECTIVE_SWING)
       signalColor = SwingSignalColor;
-   
-   // Professional label with all details
-   string line1 = StringFormat("? %s %s SIGNAL [Conf:%d/10 | Wgt:%d]",
+
+   // Professional label with all details including timestamp
+   string timeStr = ShowAlertTimestamp ? TimeToString(g_CurrentSignal.time, TIME_DATE|TIME_MINUTES) : "";
+
+   string line1 = StringFormat("⚡ %s %s SIGNAL [Conf:%d/10 | Wgt:%d]%s%s",
                                g_CurrentSignal.perspectiveText,
                                g_CurrentSignal.isBuy ? "BUY" : "SELL",
                                g_CurrentSignal.confluenceScore,
-                               g_CurrentSignal.tfWeight);
-   
+                               g_CurrentSignal.tfWeight,
+                               ShowAlertTimestamp ? " | 🕐 " : "",
+                               ShowAlertTimestamp ? timeStr : "");
+
    string line2 = StringFormat("TFs Aligned: %s", g_CurrentSignal.confirmingTFs);
-   
+
    string line3 = StringFormat("Entry: %.5f | SL: %.5f | TP: %.5f",
                                g_CurrentSignal.entryPrice,
                                g_CurrentSignal.stopLoss,
                                g_CurrentSignal.takeProfit);
-   
+
    string line4 = StringFormat("Hold Time: %s | RR: %.1f:1",
                                g_CurrentSignal.holdTime,
                                g_CurrentSignal.riskReward);
@@ -1842,43 +1975,69 @@ void CreateMiniChart(int tfIndex)
    int chartWidth = miniWidth - 30;
    int barWidth = chartWidth / bars;
    
-   // Draw simple candlesticks
+   // Draw enhanced candlesticks with better visibility
    for(int i = 0; i < bars && i < ArraySize(open); i++)
    {
       string candleName = "SymMaster_MiniCandle_" + IntegerToString(i);
-      
+
       int barX = chartLeft + ((bars - 1 - i) * barWidth);
       int openY = chartTop + (int)((maxPrice - open[i]) / priceRange * chartHeight);
       int closeY = chartTop + (int)((maxPrice - close[i]) / priceRange * chartHeight);
       int highY = chartTop + (int)((maxPrice - high[i]) / priceRange * chartHeight);
       int lowY = chartTop + (int)((maxPrice - low[i]) / priceRange * chartHeight);
-      
-      // Determine candle color - SWAPPED to fix reversed wiring
+
+      // Determine candle color and type
       bool isBullish = close[i] > open[i];  // Bullish = close higher than open
       color candleColor = isBullish ? MinChartBullishColor : MinChartBearishColor;
-      
-      // Draw high-low line (wick)
-      ObjectCreate(0, candleName + "_wick", OBJ_LABEL, 0, 0, 0);
-      ObjectSetInteger(0, candleName + "_wick", OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, candleName + "_wick", OBJPROP_XDISTANCE, barX + barWidth/2);
-      ObjectSetInteger(0, candleName + "_wick", OBJPROP_YDISTANCE, highY);
-      ObjectSetString(0, candleName + "_wick", OBJPROP_TEXT, "|");
-      ObjectSetInteger(0, candleName + "_wick", OBJPROP_COLOR, candleColor);
-      ObjectSetInteger(0, candleName + "_wick", OBJPROP_FONTSIZE, (lowY - highY)/10);
-      
-      // Draw body (simplified as rectangle label)
+      color wickColor = candleColor;
+
+      // Draw upper wick (high to body top) as rectangle label for better visibility
+      int wickWidth = MathMax(1, barWidth / 4);
+      int wickX = barX + (barWidth / 2) - (wickWidth / 2);
+
       int bodyTop = MathMin(openY, closeY);
-      int bodyHeight = MathMax(MathAbs(closeY - openY), 2);
-      
+      int bodyBottom = MathMax(openY, closeY);
+
+      // Upper wick
+      if(highY < bodyTop)
+      {
+         ObjectCreate(0, candleName + "_wick_upper", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, candleName + "_wick_upper", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, candleName + "_wick_upper", OBJPROP_XDISTANCE, wickX);
+         ObjectSetInteger(0, candleName + "_wick_upper", OBJPROP_YDISTANCE, highY);
+         ObjectSetInteger(0, candleName + "_wick_upper", OBJPROP_XSIZE, wickWidth);
+         ObjectSetInteger(0, candleName + "_wick_upper", OBJPROP_YSIZE, bodyTop - highY);
+         ObjectSetInteger(0, candleName + "_wick_upper", OBJPROP_BGCOLOR, wickColor);
+         ObjectSetInteger(0, candleName + "_wick_upper", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+      }
+
+      // Lower wick
+      if(lowY > bodyBottom)
+      {
+         ObjectCreate(0, candleName + "_wick_lower", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, candleName + "_wick_lower", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, candleName + "_wick_lower", OBJPROP_XDISTANCE, wickX);
+         ObjectSetInteger(0, candleName + "_wick_lower", OBJPROP_YDISTANCE, bodyBottom);
+         ObjectSetInteger(0, candleName + "_wick_lower", OBJPROP_XSIZE, wickWidth);
+         ObjectSetInteger(0, candleName + "_wick_lower", OBJPROP_YSIZE, lowY - bodyBottom);
+         ObjectSetInteger(0, candleName + "_wick_lower", OBJPROP_BGCOLOR, wickColor);
+         ObjectSetInteger(0, candleName + "_wick_lower", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+      }
+
+      // Draw body with better proportions
+      int bodyHeight = MathMax(MathAbs(closeY - openY), 2);  // Minimum 2 pixels for visibility
+      int bodyWidth = MathMax(barWidth - 2, 2);  // Ensure minimum width
+
       ObjectCreate(0, candleName + "_body", OBJ_RECTANGLE_LABEL, 0, 0, 0);
       ObjectSetInteger(0, candleName + "_body", OBJPROP_CORNER, CORNER_LEFT_UPPER);
       ObjectSetInteger(0, candleName + "_body", OBJPROP_XDISTANCE, barX + 1);
       ObjectSetInteger(0, candleName + "_body", OBJPROP_YDISTANCE, bodyTop);
-      ObjectSetInteger(0, candleName + "_body", OBJPROP_XSIZE, barWidth - 2);
+      ObjectSetInteger(0, candleName + "_body", OBJPROP_XSIZE, bodyWidth);
       ObjectSetInteger(0, candleName + "_body", OBJPROP_YSIZE, bodyHeight);
       ObjectSetInteger(0, candleName + "_body", OBJPROP_BGCOLOR, candleColor);
       ObjectSetInteger(0, candleName + "_body", OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, candleName + "_body", OBJPROP_COLOR, candleColor);
+      ObjectSetInteger(0, candleName + "_body", OBJPROP_WIDTH, 1);
    }
    
    // Display key stats
@@ -1916,14 +2075,16 @@ void CloseMiniChart()
    ObjectDelete(0, "SymMaster_MiniTitle");
    ObjectDelete(0, "SymMaster_MiniClose");
    ObjectDelete(0, "SymMaster_MiniStats");
-   
-   // Delete all candle objects
+
+   // Delete all enhanced candle objects (body + upper and lower wicks)
    for(int i = 0; i < 50; i++)
    {
       ObjectDelete(0, "SymMaster_MiniCandle_" + IntegerToString(i) + "_wick");
+      ObjectDelete(0, "SymMaster_MiniCandle_" + IntegerToString(i) + "_wick_upper");
+      ObjectDelete(0, "SymMaster_MiniCandle_" + IntegerToString(i) + "_wick_lower");
       ObjectDelete(0, "SymMaster_MiniCandle_" + IntegerToString(i) + "_body");
    }
-   
+
    g_ActiveMiniChart = -1;
    ChartRedraw();
 }
