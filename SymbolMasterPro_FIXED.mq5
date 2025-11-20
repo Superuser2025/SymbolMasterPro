@@ -302,25 +302,7 @@ int OnInit()
    ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true);
    ChartSetInteger(0, CHART_EVENT_OBJECT_CREATE, true);
    ChartSetInteger(0, CHART_EVENT_OBJECT_DELETE, true);
-   
-   // Create dashboard
-   if(ShowDashboard)
-   {
-      CreateDashboard();
 
-      // Perform initial analysis immediately
-      if(!g_MultiSymbolMode)
-      {
-         PerformMultiTimeframeAnalysis();
-         UpdateDashboard();
-      }
-      else
-      {
-         PerformMultiSymbolAnalysis();
-         UpdateMultiSymbolDashboards();
-      }
-   }
-   
    // Initialize active signal style from input parameter
    g_ActiveSignalStyle = SignalDisplayStyle;
 
@@ -329,7 +311,7 @@ int OnInit()
    g_SignalHistoryCount = 0;
    g_ShowSignalArchive = ShowSignalArchive;
 
-   // Initialize multi-symbol mode if enabled
+   // Initialize multi-symbol mode if enabled - MUST BE BEFORE DASHBOARD CREATION!
    g_MultiSymbolMode = EnableMultiSymbolMode;
    if(g_MultiSymbolMode)
    {
@@ -374,6 +356,29 @@ int OnInit()
       }
 
       Print(">>> Multi-Symbol Mode ENABLED with ", g_MultiSymbolCount, " symbols");
+   }
+
+   // Create dashboard AFTER multi-symbol mode is initialized
+   if(ShowDashboard)
+   {
+      CreateDashboard();
+
+      if(g_MultiSymbolMode)
+      {
+         CreateMultiSymbolDashboards();
+      }
+
+      // Perform initial analysis immediately
+      if(!g_MultiSymbolMode)
+      {
+         PerformMultiTimeframeAnalysis();
+         UpdateDashboard();
+      }
+      else
+      {
+         PerformMultiSymbolAnalysis();
+         UpdateMultiSymbolDashboards();
+      }
    }
 
    Print(">>> Symbol Master Pro initialized for ", g_Symbol, " with ", g_ActiveTFCount, " timeframes");
@@ -2011,19 +2016,29 @@ void CreateDashboard()
    ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BGCOLOR, clrDarkSlateGray);
    ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BORDER_COLOR, clrGray);
 
-   // === MODE TOGGLE BUTTON (Smart single toggle) ===
-   ObjectCreate(0, "SymMaster_ModeToggle", OBJ_BUTTON, 0, 0, 0);
+   // === MODE TOGGLE (Clickable label - DIFFERENT style than buttons) ===
+   // Background rectangle
+   ObjectCreate(0, "SymMaster_ModeToggleBG", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_XDISTANCE, DashboardXPos + 270);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_YDISTANCE, DashboardYPos + 45);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_XSIZE, 105);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_YSIZE, 30);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_BGCOLOR, clrBlack);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_WIDTH, 3);
+   ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_BACK, false);
+
+   // Clickable text label on top
+   ObjectCreate(0, "SymMaster_ModeToggle", OBJ_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_XDISTANCE, DashboardXPos + 270);
-   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_YDISTANCE, DashboardYPos + 45);
-   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_XSIZE, 105);
-   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_YSIZE, 30);
-   // Button shows what clicking it will DO (switch to the other mode)
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_XDISTANCE, DashboardXPos + 285);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_YDISTANCE, DashboardYPos + 52);
    ObjectSetString(0, "SymMaster_ModeToggle", OBJPROP_TEXT, g_MultiSymbolMode ? "🔄 SINGLE" : "🔄 MULTI");
-   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_FONTSIZE, 9);
-   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_COLOR, clrWhite);
-   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_BGCOLOR, clrDarkOliveGreen);
-   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_BORDER_COLOR, clrGold);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_COLOR, clrYellow);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_FONTSIZE, 10);
+   ObjectSetString(0, "SymMaster_ModeToggle", OBJPROP_FONT, "Arial Bold");
 
    // Symbol name
    ObjectCreate(0, "SymMaster_Symbol", OBJ_LABEL, 0, 0, 0);
@@ -2615,7 +2630,8 @@ void DeleteDashboard()
    ObjectDelete(0, "SymMaster_StyleA");
    ObjectDelete(0, "SymMaster_StyleB");
    ObjectDelete(0, "SymMaster_StyleC");
-   ObjectDelete(0, "SymMaster_ModeToggle");  // Delete mode toggle button
+   ObjectDelete(0, "SymMaster_ModeToggle");  // Delete mode toggle label
+   ObjectDelete(0, "SymMaster_ModeToggleBG");  // Delete mode toggle background
 
    // Delete single-symbol timeframe buttons
    for(int i = 0; i < 7; i++)
