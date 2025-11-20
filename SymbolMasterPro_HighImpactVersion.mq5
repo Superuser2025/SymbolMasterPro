@@ -317,6 +317,25 @@ struct ConfluenceSignal
 };
 
 //+------------------------------------------------------------------+
+//| FEATURE #1: Dynamic SL/TP Structure                              |
+//+------------------------------------------------------------------+
+struct TradeParameters
+{
+   double entryPrice;
+   double stopLoss;
+   double takeProfit1;     // 1.5R
+   double takeProfit2;     // 2.5R
+   double takeProfit3;     // 4.0R
+   double riskInPips;
+   double rewardInPips1;
+   double rewardInPips2;
+   double rewardInPips3;
+   double lotSize;
+   string symbol;
+   bool isBuy;
+};
+
+//+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                  |
 //+------------------------------------------------------------------+
 string g_Symbol;
@@ -367,6 +386,15 @@ int g_MultiSignalHistoryCount[MAX_MULTI_SYMBOLS];
 ConfluenceSignal g_MultiCurrentSignal[MAX_MULTI_SYMBOLS];
 bool g_MultiSignalActive[MAX_MULTI_SYMBOLS];
 datetime g_MultiLastSignalTime[MAX_MULTI_SYMBOLS];
+
+// FEATURE #1: Dynamic SL/TP Global Variables
+TradeParameters g_CurrentTradeParams;
+bool g_TradeParamsActive = false;
+int g_ADX_Handle = INVALID_HANDLE;  // For Feature #6 (will be used later)
+
+// FEATURE #10: Trade Panel Global Variables
+bool g_TradePanelVisible = false;
+datetime g_TradePanelSignalTime = 0;
 
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                          |
@@ -509,7 +537,13 @@ void OnDeinit(const int reason)
    // Delete all chart objects
    DeleteDashboard();
    DeleteAllChartObjects();
-   
+
+   // FEATURE #1: Clear SL/TP levels
+   ClearSLTPLevels();
+
+   // FEATURE #10: Hide trade panel
+   HideTradePanel();
+
    // Release indicator handles
    for(int i = 0; i < g_ActiveTFCount; i++)
    {
@@ -897,6 +931,610 @@ void OnChartEvent(const int id,
          ChartRedraw();
          return;
       }
+
+      // ========== FEATURE #10: TRADE PANEL BUTTON HANDLERS ==========
+      // Check if EXECUTE button clicked
+      if(sparam == "SymMaster_TradePanel_ExecuteBtn")
+      {
+         // Deselect button
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+
+         Print(">>> EXECUTE BUTTON CLICKED - Executing trade...");
+
+         if(g_TradeParamsActive)
+         {
+            bool success = ExecuteTrade(g_CurrentTradeParams);
+            if(success)
+            {
+               Print(">>> Trade executed successfully!");
+            }
+            else
+            {
+               Print(">>> Trade execution failed!");
+            }
+         }
+         else
+         {
+            Print(">>> ERROR: No active trade parameters!");
+            HideTradePanel();
+         }
+         return;
+      }
+
+      // Check if SKIP button clicked
+      if(sparam == "SymMaster_TradePanel_SkipBtn")
+      {
+         // Deselect button
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+
+         Print(">>> SKIP BUTTON CLICKED - Trade skipped");
+         HideTradePanel();
+         return;
+      }
+      // ========== END FEATURE #10 ==========
+   }
+}
+
+//+------------------------------------------------------------------+
+//| FEATURE #1: DYNAMIC SL/TP CALCULATOR - IMPLEMENTATION            |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Calculate Dynamic Stop Loss                                      |
+//+------------------------------------------------------------------+
+double CalculateDynamicStopLoss(string symbol, ENUM_TIMEFRAMES timeframe, bool isBuy, double entryPrice)
+{
+   if(!EnableDynamicSLTP) return 0.0;
+
+   double stopLoss = 0.0;
+   double atrStopLoss = 0.0;
+   double structureStopLoss = 0.0;
+
+   // METHOD 1: ATR-based Stop Loss
+   double atr[];
+   ArraySetAsSeries(atr, true);
+   int atrHandle = iATR(symbol, timeframe, 14);
+   if(atrHandle != INVALID_HANDLE)
+   {
+      if(CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
+      {
+         double atrValue = atr[0];
+         double atrDistance = atrValue * SLATRMultiplier;
+
+         if(isBuy)
+            atrStopLoss = entryPrice - atrDistance;
+         else
+            atrStopLoss = entryPrice + atrDistance;
+      }
+      IndicatorRelease(atrHandle);
+   }
+
+   // METHOD 2: Structure-based Stop Loss (swing high/low)
+   double high[];
+   double low[];
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+
+   int lookback = SwingLookback;
+   if(CopyHigh(symbol, timeframe, 0, lookback, high) > 0 &&
+      CopyLow(symbol, timeframe, 0, lookback, low) > 0)
+   {
+      if(isBuy)
+      {
+         // Find recent swing low
+         double swingLow = low[ArrayMinimum(low, 0, lookback)];
+         double bufferPips = SLStructureBuffer * _Point * 10;  // Convert pips to price
+         structureStopLoss = swingLow - bufferPips;
+      }
+      else
+      {
+         // Find recent swing high
+         double swingHigh = high[ArrayMaximum(high, 0, lookback)];
+         double bufferPips = SLStructureBuffer * _Point * 10;  // Convert pips to price
+         structureStopLoss = swingHigh + bufferPips;
+      }
+   }
+
+   // Use the tighter (closer to entry) stop loss if both are valid
+   if(atrStopLoss > 0 && structureStopLoss > 0)
+   {
+      if(isBuy)
+         stopLoss = MathMax(atrStopLoss, structureStopLoss);  // Tighter stop for BUY
+      else
+         stopLoss = MathMin(atrStopLoss, structureStopLoss);  // Tighter stop for SELL
+   }
+   else if(atrStopLoss > 0)
+   {
+      stopLoss = atrStopLoss;
+   }
+   else if(structureStopLoss > 0)
+   {
+      stopLoss = structureStopLoss;
+   }
+   else
+   {
+      // Fallback: Use fixed pip distance
+      double fallbackPips = 50.0 * _Point * 10;
+      stopLoss = isBuy ? (entryPrice - fallbackPips) : (entryPrice + fallbackPips);
+   }
+
+   return NormalizeDouble(stopLoss, _Digits);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Multiple Take Profit Levels                            |
+//+------------------------------------------------------------------+
+void CalculateMultipleTakeProfits(TradeParameters &params)
+{
+   if(!EnableDynamicSLTP) return;
+
+   double riskDistance = MathAbs(params.entryPrice - params.stopLoss);
+   params.riskInPips = riskDistance / (_Point * 10);
+
+   if(params.isBuy)
+   {
+      params.takeProfit1 = params.entryPrice + (riskDistance * TP1_RiskReward);
+      params.takeProfit2 = params.entryPrice + (riskDistance * TP2_RiskReward);
+      params.takeProfit3 = params.entryPrice + (riskDistance * TP3_RiskReward);
+   }
+   else
+   {
+      params.takeProfit1 = params.entryPrice - (riskDistance * TP1_RiskReward);
+      params.takeProfit2 = params.entryPrice - (riskDistance * TP2_RiskReward);
+      params.takeProfit3 = params.entryPrice - (riskDistance * TP3_RiskReward);
+   }
+
+   params.rewardInPips1 = MathAbs(params.takeProfit1 - params.entryPrice) / (_Point * 10);
+   params.rewardInPips2 = MathAbs(params.takeProfit2 - params.entryPrice) / (_Point * 10);
+   params.rewardInPips3 = MathAbs(params.takeProfit3 - params.entryPrice) / (_Point * 10);
+
+   // Normalize to proper digits
+   params.takeProfit1 = NormalizeDouble(params.takeProfit1, _Digits);
+   params.takeProfit2 = NormalizeDouble(params.takeProfit2, _Digits);
+   params.takeProfit3 = NormalizeDouble(params.takeProfit3, _Digits);
+}
+
+//+------------------------------------------------------------------+
+//| Draw SL/TP Levels on Chart                                       |
+//+------------------------------------------------------------------+
+void DrawSLTPLevelsOnChart(TradeParameters &params)
+{
+   if(!EnableDynamicSLTP || !DrawSLTPLevels) return;
+
+   string prefix = "SymMaster_SLTP_";
+
+   // Clear old levels first
+   ClearSLTPLevels();
+
+   datetime currentTime = TimeCurrent();
+   datetime futureTime = currentTime + PeriodSeconds(PERIOD_H4);  // Extend 4 hours into future
+
+   // Draw Entry Level
+   string entryName = prefix + "Entry";
+   ObjectCreate(0, entryName, OBJ_TREND, 0, currentTime, params.entryPrice, futureTime, params.entryPrice);
+   ObjectSetInteger(0, entryName, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, entryName, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, entryName, OBJPROP_STYLE, STYLE_SOLID);
+   ObjectSetInteger(0, entryName, OBJPROP_RAY_RIGHT, true);
+   ObjectSetInteger(0, entryName, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, entryName, OBJPROP_BACK, false);
+   ObjectSetString(0, entryName, OBJPROP_TEXT, "Entry: " + DoubleToString(params.entryPrice, _Digits));
+
+   // Draw Stop Loss
+   string slName = prefix + "SL";
+   ObjectCreate(0, slName, OBJ_TREND, 0, currentTime, params.stopLoss, futureTime, params.stopLoss);
+   ObjectSetInteger(0, slName, OBJPROP_COLOR, SLColor);
+   ObjectSetInteger(0, slName, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, slName, OBJPROP_STYLE, STYLE_SOLID);
+   ObjectSetInteger(0, slName, OBJPROP_RAY_RIGHT, true);
+   ObjectSetInteger(0, slName, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, slName, OBJPROP_BACK, false);
+   ObjectSetString(0, slName, OBJPROP_TEXT, "SL: " + DoubleToString(params.stopLoss, _Digits) + " (-" + DoubleToString(params.riskInPips, 1) + " pips)");
+
+   // Draw Take Profit 1
+   string tp1Name = prefix + "TP1";
+   ObjectCreate(0, tp1Name, OBJ_TREND, 0, currentTime, params.takeProfit1, futureTime, params.takeProfit1);
+   ObjectSetInteger(0, tp1Name, OBJPROP_COLOR, TP1Color);
+   ObjectSetInteger(0, tp1Name, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, tp1Name, OBJPROP_STYLE, STYLE_DOT);
+   ObjectSetInteger(0, tp1Name, OBJPROP_RAY_RIGHT, true);
+   ObjectSetInteger(0, tp1Name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, tp1Name, OBJPROP_BACK, false);
+   ObjectSetString(0, tp1Name, OBJPROP_TEXT, "TP1: " + DoubleToString(params.takeProfit1, _Digits) + " (+" + DoubleToString(params.rewardInPips1, 1) + " pips | " + DoubleToString(TP1_RiskReward, 1) + "R)");
+
+   // Draw Take Profit 2
+   string tp2Name = prefix + "TP2";
+   ObjectCreate(0, tp2Name, OBJ_TREND, 0, currentTime, params.takeProfit2, futureTime, params.takeProfit2);
+   ObjectSetInteger(0, tp2Name, OBJPROP_COLOR, TP2Color);
+   ObjectSetInteger(0, tp2Name, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, tp2Name, OBJPROP_STYLE, STYLE_DOT);
+   ObjectSetInteger(0, tp2Name, OBJPROP_RAY_RIGHT, true);
+   ObjectSetInteger(0, tp2Name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, tp2Name, OBJPROP_BACK, false);
+   ObjectSetString(0, tp2Name, OBJPROP_TEXT, "TP2: " + DoubleToString(params.takeProfit2, _Digits) + " (+" + DoubleToString(params.rewardInPips2, 1) + " pips | " + DoubleToString(TP2_RiskReward, 1) + "R)");
+
+   // Draw Take Profit 3
+   string tp3Name = prefix + "TP3";
+   ObjectCreate(0, tp3Name, OBJ_TREND, 0, currentTime, params.takeProfit3, futureTime, params.takeProfit3);
+   ObjectSetInteger(0, tp3Name, OBJPROP_COLOR, TP3Color);
+   ObjectSetInteger(0, tp3Name, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, tp3Name, OBJPROP_STYLE, STYLE_DOT);
+   ObjectSetInteger(0, tp3Name, OBJPROP_RAY_RIGHT, true);
+   ObjectSetInteger(0, tp3Name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, tp3Name, OBJPROP_BACK, false);
+   ObjectSetString(0, tp3Name, OBJPROP_TEXT, "TP3: " + DoubleToString(params.takeProfit3, _Digits) + " (+" + DoubleToString(params.rewardInPips3, 1) + " pips | " + DoubleToString(TP3_RiskReward, 1) + "R)");
+
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Clear SL/TP Levels from Chart                                    |
+//+------------------------------------------------------------------+
+void ClearSLTPLevels()
+{
+   string prefix = "SymMaster_SLTP_";
+   ObjectDelete(0, prefix + "Entry");
+   ObjectDelete(0, prefix + "SL");
+   ObjectDelete(0, prefix + "TP1");
+   ObjectDelete(0, prefix + "TP2");
+   ObjectDelete(0, prefix + "TP3");
+}
+
+//+------------------------------------------------------------------+
+//| FEATURE #2: POSITION SIZE CALCULATOR - IMPLEMENTATION            |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Calculate Position Size Based on Risk                            |
+//+------------------------------------------------------------------+
+double CalculatePositionSize(string symbol, double entryPrice, double stopLoss, double riskPercent)
+{
+   if(!EnablePositionSizing || !AutoCalculateLotSize) return MinLotSize;
+
+   // Get account balance
+   double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   if(accountBalance <= 0) return MinLotSize;
+
+   // Calculate risk amount in account currency
+   double riskAmount = accountBalance * (riskPercent / 100.0);
+
+   // Calculate stop loss distance in pips
+   double slDistance = MathAbs(entryPrice - stopLoss);
+   if(slDistance <= 0) return MinLotSize;
+
+   // Get symbol specifications
+   double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+
+   if(tickSize <= 0 || tickValue <= 0) return MinLotSize;
+
+   // Calculate pip value per lot
+   double pipValue = (tickValue / tickSize) * _Point;
+
+   // Calculate required lot size
+   double slPips = slDistance / _Point;
+   double lotSize = riskAmount / (slPips * pipValue);
+
+   // Round to lot step
+   lotSize = MathFloor(lotSize / lotStep) * lotStep;
+
+   // Apply min/max constraints
+   lotSize = MathMax(lotSize, MinLotSize);
+   lotSize = MathMin(lotSize, MaxLotSize);
+
+   // Check broker limits
+   double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   lotSize = MathMax(lotSize, minLot);
+   lotSize = MathMin(lotSize, maxLot);
+
+   return NormalizeDouble(lotSize, 2);
+}
+
+//+------------------------------------------------------------------+
+//| Get Daily Risk Already Used                                      |
+//+------------------------------------------------------------------+
+double GetDailyRiskUsed()
+{
+   if(!EnablePositionSizing) return 0.0;
+
+   double totalRiskUsed = 0.0;
+   datetime todayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+
+   // Count open positions from today
+   int totalPositions = PositionsTotal();
+   for(int i = 0; i < totalPositions; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+         if(openTime >= todayStart)
+         {
+            double positionVolume = PositionGetDouble(POSITION_VOLUME);
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double sl = PositionGetDouble(POSITION_SL);
+
+            if(sl > 0)
+            {
+               double slDistance = MathAbs(openPrice - sl);
+               double slPips = slDistance / _Point;
+
+               // Estimate risk for this position
+               double tickValue = SymbolInfoDouble(PositionGetString(POSITION_SYMBOL), SYMBOL_TRADE_TICK_VALUE);
+               double riskAmount = slPips * tickValue * positionVolume;
+
+               double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+               if(accountBalance > 0)
+               {
+                  double riskPercent = (riskAmount / accountBalance) * 100.0;
+                  totalRiskUsed += riskPercent;
+               }
+            }
+         }
+      }
+   }
+
+   return totalRiskUsed;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Daily Risk Limit Exceeded                               |
+//+------------------------------------------------------------------+
+bool IsDailyRiskLimitExceeded(double additionalRiskPercent)
+{
+   if(!EnablePositionSizing) return false;
+
+   double currentRiskUsed = GetDailyRiskUsed();
+   double totalRisk = currentRiskUsed + additionalRiskPercent;
+
+   if(totalRisk > MaxDailyRiskPercent)
+   {
+      Print(">>> DAILY RISK LIMIT EXCEEDED! Current: ", DoubleToString(currentRiskUsed, 2),
+            "% | Requested: ", DoubleToString(additionalRiskPercent, 2),
+            "% | Total: ", DoubleToString(totalRisk, 2),
+            "% | Max Allowed: ", DoubleToString(MaxDailyRiskPercent, 2), "%");
+      return true;
+   }
+
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| FEATURE #10: ONE-CLICK TRADE PANEL - IMPLEMENTATION              |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Create Trade Panel UI                                            |
+//+------------------------------------------------------------------+
+void CreateTradePanel(TradeParameters &params)
+{
+   if(!EnableTradePanel) return;
+
+   string prefix = "SymMaster_TradePanel_";
+
+   // Clear old panel first
+   HideTradePanel();
+
+   int panelWidth = 300;
+   int panelHeight = 280;
+   int xPos = TradePanelXPos;
+   int yPos = TradePanelYPos;
+
+   // Main panel background
+   ObjectCreate(0, prefix + "BG", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_XDISTANCE, xPos);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_YDISTANCE, yPos);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_XSIZE, panelWidth);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_YSIZE, panelHeight);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_BGCOLOR, TradePanelBackground);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_COLOR, TradePanelBorder);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, prefix + "BG", OBJPROP_BACK, false);
+
+   // Title
+   ObjectCreate(0, prefix + "Title", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "Title", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "Title", OBJPROP_YDISTANCE, yPos + 10);
+   ObjectSetInteger(0, prefix + "Title", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "Title", OBJPROP_TEXT, "🚀 TRADE EXECUTION PANEL");
+   ObjectSetInteger(0, prefix + "Title", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, prefix + "Title", OBJPROP_FONTSIZE, 11);
+   ObjectSetString(0, prefix + "Title", OBJPROP_FONT, "Arial Bold");
+
+   // Signal info
+   string direction = params.isBuy ? "🟢 BUY" : "🔴 SELL";
+   ObjectCreate(0, prefix + "Direction", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "Direction", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "Direction", OBJPROP_YDISTANCE, yPos + 35);
+   ObjectSetInteger(0, prefix + "Direction", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "Direction", OBJPROP_TEXT, "Direction: " + direction);
+   ObjectSetInteger(0, prefix + "Direction", OBJPROP_COLOR, params.isBuy ? clrLime : clrRed);
+   ObjectSetInteger(0, prefix + "Direction", OBJPROP_FONTSIZE, 10);
+
+   // Symbol
+   ObjectCreate(0, prefix + "Symbol", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "Symbol", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "Symbol", OBJPROP_YDISTANCE, yPos + 55);
+   ObjectSetInteger(0, prefix + "Symbol", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "Symbol", OBJPROP_TEXT, "Symbol: " + params.symbol);
+   ObjectSetInteger(0, prefix + "Symbol", OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, prefix + "Symbol", OBJPROP_FONTSIZE, 9);
+
+   // Entry Price
+   ObjectCreate(0, prefix + "Entry", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "Entry", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "Entry", OBJPROP_YDISTANCE, yPos + 75);
+   ObjectSetInteger(0, prefix + "Entry", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "Entry", OBJPROP_TEXT, "Entry: " + DoubleToString(params.entryPrice, _Digits));
+   ObjectSetInteger(0, prefix + "Entry", OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, prefix + "Entry", OBJPROP_FONTSIZE, 9);
+
+   // Stop Loss
+   ObjectCreate(0, prefix + "SL", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "SL", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "SL", OBJPROP_YDISTANCE, yPos + 95);
+   ObjectSetInteger(0, prefix + "SL", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "SL", OBJPROP_TEXT, "SL: " + DoubleToString(params.stopLoss, _Digits) + " (-" + DoubleToString(params.riskInPips, 1) + " pips)");
+   ObjectSetInteger(0, prefix + "SL", OBJPROP_COLOR, clrRed);
+   ObjectSetInteger(0, prefix + "SL", OBJPROP_FONTSIZE, 9);
+
+   // Take Profit 1
+   ObjectCreate(0, prefix + "TP1", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "TP1", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "TP1", OBJPROP_YDISTANCE, yPos + 115);
+   ObjectSetInteger(0, prefix + "TP1", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "TP1", OBJPROP_TEXT, "TP1: " + DoubleToString(params.takeProfit1, _Digits) + " (+" + DoubleToString(params.rewardInPips1, 1) + " pips | " + DoubleToString(TP1_RiskReward, 1) + "R)");
+   ObjectSetInteger(0, prefix + "TP1", OBJPROP_COLOR, clrLime);
+   ObjectSetInteger(0, prefix + "TP1", OBJPROP_FONTSIZE, 8);
+
+   // Take Profit 2
+   ObjectCreate(0, prefix + "TP2", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "TP2", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "TP2", OBJPROP_YDISTANCE, yPos + 135);
+   ObjectSetInteger(0, prefix + "TP2", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "TP2", OBJPROP_TEXT, "TP2: " + DoubleToString(params.takeProfit2, _Digits) + " (+" + DoubleToString(params.rewardInPips2, 1) + " pips | " + DoubleToString(TP2_RiskReward, 1) + "R)");
+   ObjectSetInteger(0, prefix + "TP2", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, prefix + "TP2", OBJPROP_FONTSIZE, 8);
+
+   // Take Profit 3
+   ObjectCreate(0, prefix + "TP3", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "TP3", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "TP3", OBJPROP_YDISTANCE, yPos + 155);
+   ObjectSetInteger(0, prefix + "TP3", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "TP3", OBJPROP_TEXT, "TP3: " + DoubleToString(params.takeProfit3, _Digits) + " (+" + DoubleToString(params.rewardInPips3, 1) + " pips | " + DoubleToString(TP3_RiskReward, 1) + "R)");
+   ObjectSetInteger(0, prefix + "TP3", OBJPROP_COLOR, clrDodgerBlue);
+   ObjectSetInteger(0, prefix + "TP3", OBJPROP_FONTSIZE, 8);
+
+   // Lot Size
+   ObjectCreate(0, prefix + "LotSize", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "LotSize", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "LotSize", OBJPROP_YDISTANCE, yPos + 180);
+   ObjectSetInteger(0, prefix + "LotSize", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "LotSize", OBJPROP_TEXT, "Lot Size: " + DoubleToString(params.lotSize, 2) + " lots (" + DoubleToString(RiskPercentPerTrade, 1) + "% risk)");
+   ObjectSetInteger(0, prefix + "LotSize", OBJPROP_COLOR, clrYellow);
+   ObjectSetInteger(0, prefix + "LotSize", OBJPROP_FONTSIZE, 9);
+
+   // EXECUTE Button
+   ObjectCreate(0, prefix + "ExecuteBtn", OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_XDISTANCE, xPos + 10);
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_YDISTANCE, yPos + 210);
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_XSIZE, 130);
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_YSIZE, 40);
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "ExecuteBtn", OBJPROP_TEXT, "✅ EXECUTE");
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_BGCOLOR, ExecuteButtonColor);
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_FONTSIZE, 11);
+   ObjectSetInteger(0, prefix + "ExecuteBtn", OBJPROP_STATE, false);
+
+   // SKIP Button
+   ObjectCreate(0, prefix + "SkipBtn", OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_XDISTANCE, xPos + 150);
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_YDISTANCE, yPos + 210);
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_XSIZE, 130);
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_YSIZE, 40);
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, prefix + "SkipBtn", OBJPROP_TEXT, "❌ SKIP");
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_BGCOLOR, SkipButtonColor);
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_FONTSIZE, 11);
+   ObjectSetInteger(0, prefix + "SkipBtn", OBJPROP_STATE, false);
+
+   g_TradePanelVisible = true;
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Hide Trade Panel                                                 |
+//+------------------------------------------------------------------+
+void HideTradePanel()
+{
+   string prefix = "SymMaster_TradePanel_";
+
+   ObjectDelete(0, prefix + "BG");
+   ObjectDelete(0, prefix + "Title");
+   ObjectDelete(0, prefix + "Direction");
+   ObjectDelete(0, prefix + "Symbol");
+   ObjectDelete(0, prefix + "Entry");
+   ObjectDelete(0, prefix + "SL");
+   ObjectDelete(0, prefix + "TP1");
+   ObjectDelete(0, prefix + "TP2");
+   ObjectDelete(0, prefix + "TP3");
+   ObjectDelete(0, prefix + "LotSize");
+   ObjectDelete(0, prefix + "ExecuteBtn");
+   ObjectDelete(0, prefix + "SkipBtn");
+
+   g_TradePanelVisible = false;
+}
+
+//+------------------------------------------------------------------+
+//| Execute Trade                                                    |
+//+------------------------------------------------------------------+
+bool ExecuteTrade(TradeParameters &params)
+{
+   if(!EnableTradePanel) return false;
+
+   MqlTradeRequest request;
+   MqlTradeResult result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+
+   // Build trade request
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = params.symbol;
+   request.volume = params.lotSize;
+   request.type = params.isBuy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   request.price = params.isBuy ? SymbolInfoDouble(params.symbol, SYMBOL_ASK) : SymbolInfoDouble(params.symbol, SYMBOL_BID);
+   request.sl = params.stopLoss;
+   request.tp = params.takeProfit1;  // Set TP1 initially
+   request.deviation = 10;
+   request.magic = 123456;  // Magic number for identification
+   request.comment = "SymbolMasterPro";
+   request.type_filling = ORDER_FILLING_FOK;
+
+   // Try to send order
+   bool success = OrderSend(request, result);
+
+   if(success && result.retcode == TRADE_RETCODE_DONE)
+   {
+      Print(">>> TRADE EXECUTED SUCCESSFULLY!");
+      Print(">>> Ticket: ", result.order);
+      Print(">>> Symbol: ", params.symbol);
+      Print(">>> Direction: ", params.isBuy ? "BUY" : "SELL");
+      Print(">>> Lot Size: ", DoubleToString(params.lotSize, 2));
+      Print(">>> Entry: ", DoubleToString(request.price, _Digits));
+      Print(">>> SL: ", DoubleToString(params.stopLoss, _Digits));
+      Print(">>> TP1: ", DoubleToString(params.takeProfit1, _Digits));
+
+      // Play sound if enabled
+      if(PlaySoundOnTradeExecution)
+      {
+         PlaySound("alert.wav");
+      }
+
+      // Show alert if enabled
+      if(AlertOnTradeExecution)
+      {
+         Alert("✅ TRADE EXECUTED: ", params.isBuy ? "BUY" : "SELL", " ", params.symbol,
+               " | Lot: ", DoubleToString(params.lotSize, 2),
+               " | Entry: ", DoubleToString(request.price, _Digits));
+      }
+
+      HideTradePanel();
+      return true;
+   }
+   else
+   {
+      Print(">>> TRADE EXECUTION FAILED!");
+      Print(">>> Error Code: ", result.retcode);
+      Print(">>> Error Description: ", result.comment);
+
+      Alert("❌ TRADE FAILED: ", result.comment);
+      return false;
    }
 }
 
@@ -1528,20 +2166,105 @@ void GenerateConfluenceSignal()
          g_SignalActive = false;
          return;
       }
-      
-      // Calculate stop loss and take profit
-      if(isBuySignal)
+
+      // ========== FEATURE #1: DYNAMIC SL/TP CALCULATOR ==========
+      if(EnableDynamicSLTP)
       {
-         g_CurrentSignal.stopLoss = currentPrice - (StopLossPips * point * 10);
-         g_CurrentSignal.takeProfit = currentPrice + (StopLossPips * MinRiskReward * point * 10);
+         // Use dynamic SL/TP calculation
+         ENUM_TIMEFRAMES signalTimeframe = g_Timeframes[0];  // Use primary timeframe
+         if(g_ActiveTFCount > 2) signalTimeframe = g_Timeframes[g_ActiveTFCount / 2];  // Use mid-range TF
+
+         // Calculate dynamic stop loss
+         double dynamicSL = CalculateDynamicStopLoss(g_Symbol, signalTimeframe, isBuySignal, currentPrice);
+
+         if(dynamicSL > 0)
+         {
+            g_CurrentSignal.stopLoss = dynamicSL;
+         }
+         else
+         {
+            // Fallback to fixed pip SL if dynamic calculation fails
+            g_CurrentSignal.stopLoss = isBuySignal ?
+               (currentPrice - (StopLossPips * point * 10)) :
+               (currentPrice + (StopLossPips * point * 10));
+         }
+
+         // Build trade parameters for TP calculation
+         g_CurrentTradeParams.symbol = g_Symbol;
+         g_CurrentTradeParams.entryPrice = currentPrice;
+         g_CurrentTradeParams.stopLoss = g_CurrentSignal.stopLoss;
+         g_CurrentTradeParams.isBuy = isBuySignal;
+
+         // Calculate multiple take profit levels
+         CalculateMultipleTakeProfits(g_CurrentTradeParams);
+
+         // Store TP1 in signal structure (for compatibility with existing code)
+         g_CurrentSignal.takeProfit = g_CurrentTradeParams.takeProfit1;
+
+         // Calculate R:R based on TP3 (maximum target)
+         double riskDistance = MathAbs(currentPrice - g_CurrentSignal.stopLoss);
+         double rewardDistance = MathAbs(g_CurrentTradeParams.takeProfit3 - currentPrice);
+         g_CurrentSignal.riskReward = riskDistance > 0 ? (rewardDistance / riskDistance) : TP3_RiskReward;
+
+         // Mark trade params as active
+         g_TradeParamsActive = true;
+
+         // Draw SL/TP levels on chart
+         if(DrawSLTPLevels)
+         {
+            DrawSLTPLevelsOnChart(g_CurrentTradeParams);
+         }
+
+         // ========== FEATURE #2: POSITION SIZE CALCULATOR ==========
+         if(EnablePositionSizing && AutoCalculateLotSize)
+         {
+            // Check daily risk limit
+            if(!IsDailyRiskLimitExceeded(RiskPercentPerTrade))
+            {
+               // Calculate position size
+               double lotSize = CalculatePositionSize(g_Symbol, currentPrice, g_CurrentSignal.stopLoss, RiskPercentPerTrade);
+               g_CurrentTradeParams.lotSize = lotSize;
+
+               Print(">>> POSITION SIZE CALCULATED: ", DoubleToString(lotSize, 2), " lots | Risk: ",
+                     DoubleToString(RiskPercentPerTrade, 2), "% | SL Distance: ",
+                     DoubleToString(g_CurrentTradeParams.riskInPips, 1), " pips");
+            }
+            else
+            {
+               // Daily risk limit exceeded - block this trade
+               Print(">>> TRADE BLOCKED: Daily risk limit of ", DoubleToString(MaxDailyRiskPercent, 2), "% exceeded!");
+               g_SignalActive = false;
+               return;
+            }
+         }
+         else
+         {
+            // Use minimum lot size if auto-sizing is disabled
+            g_CurrentTradeParams.lotSize = MinLotSize;
+         }
+         // ========== END FEATURE #2 ==========
       }
       else
       {
-         g_CurrentSignal.stopLoss = currentPrice + (StopLossPips * point * 10);
-         g_CurrentSignal.takeProfit = currentPrice - (StopLossPips * MinRiskReward * point * 10);
+         // Use fixed pip calculation (original method)
+         if(isBuySignal)
+         {
+            g_CurrentSignal.stopLoss = currentPrice - (StopLossPips * point * 10);
+            g_CurrentSignal.takeProfit = currentPrice + (StopLossPips * MinRiskReward * point * 10);
+         }
+         else
+         {
+            g_CurrentSignal.stopLoss = currentPrice + (StopLossPips * point * 10);
+            g_CurrentSignal.takeProfit = currentPrice - (StopLossPips * MinRiskReward * point * 10);
+         }
+
+         g_CurrentSignal.riskReward = MinRiskReward;
+
+         // Set default lot size for non-dynamic mode
+         g_CurrentTradeParams.lotSize = MinLotSize;
       }
-      
-      g_CurrentSignal.riskReward = MinRiskReward;
+      // ========== END FEATURE #1 ==========
+
       g_CurrentSignal.setupDescription = "Multi-TF " + g_CurrentSignal.perspectiveText + " Setup";
       
       g_SignalActive = true;
@@ -1589,6 +2312,25 @@ void GenerateConfluenceSignal()
          Print(">>> NEW SIGNAL GENERATED: ", g_CurrentSignal.perspectiveText, " ",
                isBuySignal ? "BUY" : "SELL", " at ", timeStr);
       }
+
+      // ========== FEATURE #10: TRADE PANEL TRIGGER ==========
+      if(EnableTradePanel && g_TradeParamsActive)
+      {
+         if(AutoExecuteTrades)
+         {
+            // Auto-execute without confirmation
+            Print(">>> AUTO-EXECUTE MODE: Executing trade immediately...");
+            ExecuteTrade(g_CurrentTradeParams);
+         }
+         else if(ShowTradePanelOnSignal)
+         {
+            // Show trade panel for manual confirmation
+            Print(">>> Showing Trade Panel for confirmation...");
+            CreateTradePanel(g_CurrentTradeParams);
+            g_TradePanelSignalTime = g_CurrentSignal.time;
+         }
+      }
+      // ========== END FEATURE #10 ==========
 
       // Draw signal on chart based on selected style
       if(DrawSignalsOnChart)
