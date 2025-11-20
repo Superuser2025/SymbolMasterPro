@@ -405,30 +405,50 @@ int OnCalculate(const int rates_total,
 {
    // Only analyze on new bar
    datetime currentBarTime = iTime(g_Symbol, PERIOD_CURRENT, 0);
-   
+
    if(currentBarTime != g_LastAnalysisTime)
    {
       g_LastAnalysisTime = currentBarTime;
-      
-      // Perform multi-timeframe analysis
-      PerformMultiTimeframeAnalysis();
-      
-      // Update dashboard
-      if(ShowDashboard)
+
+      if(g_MultiSymbolMode)
       {
-         UpdateDashboard();
+         // MULTI-SYMBOL MODE: Analyze all 10 symbols
+         PerformMultiSymbolAnalysis();
+
+         // Update multi-symbol dashboards
+         if(ShowDashboard)
+         {
+            UpdateMultiSymbolDashboards();
+         }
+
+         // Generate signals for all symbols
+         if(GenerateSignals)
+         {
+            GenerateMultiSymbolSignals();
+         }
       }
-      
-      // Generate signals
-      if(GenerateSignals)
+      else
       {
-         GenerateConfluenceSignal();
+         // SINGLE-SYMBOL MODE: Original behavior
+         PerformMultiTimeframeAnalysis();
+
+         // Update dashboard
+         if(ShowDashboard)
+         {
+            UpdateDashboard();
+         }
+
+         // Generate signals
+         if(GenerateSignals)
+         {
+            GenerateConfluenceSignal();
+         }
+
+         // Draw objects on chart
+         DrawChartObjects();
       }
-      
-      // Draw objects on chart
-      DrawChartObjects();
    }
-   
+
    return(rates_total);
 }
 
@@ -558,6 +578,35 @@ void OnChartEvent(const int id,
          Print("Signal display style changed to: ADVANCED LABEL (showing ", g_SignalHistoryCount, " signals)");
          return;
       }
+
+      // Mode Toggle Button Click
+      if(sparam == "SymMaster_ModeToggle")
+      {
+         // Toggle the mode
+         g_MultiSymbolMode = !g_MultiSymbolMode;
+
+         Print(">>> Switching to ", g_MultiSymbolMode ? "MULTI-SYMBOL" : "SINGLE-SYMBOL", " mode");
+
+         // Delete ALL dashboard objects
+         DeleteDashboard();
+
+         // Recreate dashboard in new mode
+         if(g_MultiSymbolMode)
+         {
+            CreateDashboard();  // Create base dashboard first
+            CreateMultiSymbolDashboards();  // Then add multi-symbol boxes
+         }
+         else
+         {
+            CreateDashboard();  // Single symbol dashboard
+         }
+
+         // Update the toggle button text
+         ObjectSetString(0, "SymMaster_ModeToggle", OBJPROP_TEXT, g_MultiSymbolMode ? "🔄 SINGLE" : "🔄 MULTI");
+
+         ChartRedraw();
+         return;
+      }
    }
 }
 
@@ -569,6 +618,169 @@ void PerformMultiTimeframeAnalysis()
    for(int i = 0; i < g_ActiveTFCount; i++)
    {
       AnalyzeTimeframe(g_TFAnalysis[i]);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Perform Multi-Symbol Analysis (all 10 symbols)                   |
+//+------------------------------------------------------------------+
+void PerformMultiSymbolAnalysis()
+{
+   for(int symIdx = 0; symIdx < g_MultiSymbolCount; symIdx++)
+   {
+      string symbol = g_MultiSymbols[symIdx];
+
+      // Analyze all timeframes for this symbol
+      for(int tfIdx = 0; tfIdx < g_ActiveTFCount; tfIdx++)
+      {
+         AnalyzeTimeframeForSymbol(g_MultiTFAnalysis[symIdx][tfIdx], symbol);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Generate Signals for All Symbols                                 |
+//+------------------------------------------------------------------+
+void GenerateMultiSymbolSignals()
+{
+   for(int symIdx = 0; symIdx < g_MultiSymbolCount; symIdx++)
+   {
+      string symbol = g_MultiSymbols[symIdx];
+
+      // Count bullish and bearish timeframes for this symbol
+      int bullishTFs = 0;
+      int bearishTFs = 0;
+      int weightedBullScore = 0;
+      int weightedBearScore = 0;
+      string confirmingTFs = "";
+
+      for(int i = 0; i < g_ActiveTFCount; i++)
+      {
+         int weight = 1;
+
+         // Assign weight based on timeframe
+         if(g_MultiTFAnalysis[symIdx][i].timeframe == PERIOD_D1) weight = 10;
+         else if(g_MultiTFAnalysis[symIdx][i].timeframe == PERIOD_H4) weight = 8;
+         else if(g_MultiTFAnalysis[symIdx][i].timeframe == PERIOD_H1) weight = 6;
+         else if(g_MultiTFAnalysis[symIdx][i].timeframe == PERIOD_M30) weight = 4;
+         else if(g_MultiTFAnalysis[symIdx][i].timeframe == PERIOD_M15) weight = 3;
+         else if(g_MultiTFAnalysis[symIdx][i].timeframe == PERIOD_M5) weight = 2;
+
+         if(g_MultiTFAnalysis[symIdx][i].bias == 1)
+         {
+            bullishTFs++;
+            weightedBullScore += weight;
+            confirmingTFs += g_MultiTFAnalysis[symIdx][i].tfName + ",";
+         }
+         else if(g_MultiTFAnalysis[symIdx][i].bias == -1)
+         {
+            bearishTFs++;
+            weightedBearScore += weight;
+            confirmingTFs += g_MultiTFAnalysis[symIdx][i].tfName + ",";
+         }
+      }
+
+      // Remove trailing comma
+      if(StringLen(confirmingTFs) > 0)
+         confirmingTFs = StringSubstr(confirmingTFs, 0, StringLen(confirmingTFs) - 1);
+
+      // Check for signal conditions
+      bool signalFound = false;
+      bool isBuySignal = false;
+      int confluenceScore = 0;
+      int weightedScore = 0;
+
+      if(bullishTFs >= MinConfirmingTimeframes)
+      {
+         signalFound = true;
+         isBuySignal = true;
+         confluenceScore = (int)MathMin((double)bullishTFs / (double)g_ActiveTFCount * 10.0, 10.0);
+         weightedScore = weightedBullScore;
+      }
+      else if(bearishTFs >= MinConfirmingTimeframes)
+      {
+         signalFound = true;
+         isBuySignal = false;
+         confluenceScore = (int)MathMin((double)bearishTFs / (double)g_ActiveTFCount * 10.0, 10.0);
+         weightedScore = weightedBearScore;
+      }
+
+      // Generate signal if conditions met
+      if(signalFound && confluenceScore >= MinConfluenceScore)
+      {
+         double currentPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
+         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+
+         g_MultiCurrentSignal[symIdx].time = TimeCurrent();
+         g_MultiCurrentSignal[symIdx].isBuy = isBuySignal;
+         g_MultiCurrentSignal[symIdx].entryPrice = currentPrice;
+         g_MultiCurrentSignal[symIdx].confluenceScore = confluenceScore;
+         g_MultiCurrentSignal[symIdx].confirmingTFs = confirmingTFs;
+         g_MultiCurrentSignal[symIdx].tfWeight = weightedScore;
+
+         // Determine perspective
+         if(weightedScore >= 18)
+         {
+            g_MultiCurrentSignal[symIdx].perspective = PERSPECTIVE_SWING;
+            g_MultiCurrentSignal[symIdx].perspectiveText = "SWING";
+            g_MultiCurrentSignal[symIdx].holdTime = "2-5 days";
+         }
+         else if(weightedScore >= 10)
+         {
+            g_MultiCurrentSignal[symIdx].perspective = PERSPECTIVE_INTRADAY;
+            g_MultiCurrentSignal[symIdx].perspectiveText = "INTRADAY";
+            g_MultiCurrentSignal[symIdx].holdTime = "1-4 hours";
+         }
+         else
+         {
+            g_MultiCurrentSignal[symIdx].perspective = PERSPECTIVE_SCALP;
+            g_MultiCurrentSignal[symIdx].perspectiveText = "SCALP";
+            g_MultiCurrentSignal[symIdx].holdTime = "5-15 mins";
+         }
+
+         // Calculate SL/TP
+         if(isBuySignal)
+         {
+            g_MultiCurrentSignal[symIdx].stopLoss = currentPrice - (StopLossPips * point * 10);
+            g_MultiCurrentSignal[symIdx].takeProfit = currentPrice + (StopLossPips * MinRiskReward * point * 10);
+         }
+         else
+         {
+            g_MultiCurrentSignal[symIdx].stopLoss = currentPrice + (StopLossPips * point * 10);
+            g_MultiCurrentSignal[symIdx].takeProfit = currentPrice - (StopLossPips * MinRiskReward * point * 10);
+         }
+
+         g_MultiCurrentSignal[symIdx].riskReward = MinRiskReward;
+         g_MultiSignalActive[symIdx] = true;
+
+         // Alert if new signal
+         if(EnableAlerts && g_MultiLastSignalTime[symIdx] != g_MultiCurrentSignal[symIdx].time)
+         {
+            g_MultiLastSignalTime[symIdx] = g_MultiCurrentSignal[symIdx].time;
+
+            string alertMsg = StringFormat("🚨 %s %s %s [%d/10]",
+                                          symbol,
+                                          g_MultiCurrentSignal[symIdx].perspectiveText,
+                                          isBuySignal ? "BUY" : "SELL",
+                                          confluenceScore);
+
+            Alert(alertMsg);
+
+            if(EnableSoundAlerts)
+            {
+               string soundFile = "alert.wav";
+               if(g_MultiCurrentSignal[symIdx].perspective == PERSPECTIVE_SWING)
+                  soundFile = "alert2.wav";
+               else if(g_MultiCurrentSignal[symIdx].perspective == PERSPECTIVE_SCALP)
+                  soundFile = "tick.wav";
+
+               PlaySound(soundFile);
+            }
+
+            if(EnablePushNotifications)
+               SendNotification(alertMsg);
+         }
+      }
    }
 }
 
@@ -606,6 +818,44 @@ void AnalyzeTimeframe(TimeframeAnalysis &tf)
    // Identify Liquidity Zones
    IdentifyLiquidityZones(tf, high, low);
    
+   // Calculate Overall Bias
+   CalculateOverallBias(tf);
+}
+
+//+------------------------------------------------------------------+
+//| Analyze Timeframe For Specific Symbol                            |
+//+------------------------------------------------------------------+
+void AnalyzeTimeframeForSymbol(TimeframeAnalysis &tf, string symbol)
+{
+   // Get price data for specified symbol
+   double close[], high[], low[], open[];
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+   ArraySetAsSeries(open, true);
+
+   int copied = CopyClose(symbol, tf.timeframe, 0, 100, close);
+   if(copied <= 0) return;
+
+   CopyHigh(symbol, tf.timeframe, 0, 100, high);
+   CopyLow(symbol, tf.timeframe, 0, 100, low);
+   CopyOpen(symbol, tf.timeframe, 0, 100, open);
+
+   // Analyze Trend
+   AnalyzeTrend(tf, close);
+
+   // Find Swing Points
+   FindSwingPoints(tf, high, low);
+
+   // Detect Order Blocks
+   DetectOrderBlocks(tf, open, high, low, close);
+
+   // Detect Fair Value Gaps
+   DetectFairValueGaps(tf, high, low);
+
+   // Identify Liquidity Zones
+   IdentifyLiquidityZones(tf, high, low);
+
    // Calculate Overall Bias
    CalculateOverallBias(tf);
 }
@@ -1741,30 +1991,19 @@ void CreateDashboard()
    ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BGCOLOR, clrDarkSlateGray);
    ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BORDER_COLOR, clrGray);
 
-   // === MODE TOGGLE BUTTONS (SINGLE/MULTI) ===
-   ObjectCreate(0, "SymMaster_ModeSingle", OBJ_BUTTON, 0, 0, 0);
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_XDISTANCE, DashboardXPos + 270);
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_YDISTANCE, DashboardYPos + 45);
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_XSIZE, 50);
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_YSIZE, 30);
-   ObjectSetString(0, "SymMaster_ModeSingle", OBJPROP_TEXT, "SINGLE");
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_FONTSIZE, 8);
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_COLOR, clrWhite);
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_BGCOLOR, g_MultiSymbolMode ? clrDarkSlateGray : clrDarkBlue);
-   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_BORDER_COLOR, g_MultiSymbolMode ? clrGray : clrDodgerBlue);
-
-   ObjectCreate(0, "SymMaster_ModeMulti", OBJ_BUTTON, 0, 0, 0);
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_XDISTANCE, DashboardXPos + 325);
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_YDISTANCE, DashboardYPos + 45);
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_XSIZE, 50);
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_YSIZE, 30);
-   ObjectSetString(0, "SymMaster_ModeMulti", OBJPROP_TEXT, "MULTI");
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_FONTSIZE, 8);
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_COLOR, clrWhite);
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_BGCOLOR, g_MultiSymbolMode ? clrDarkBlue : clrDarkSlateGray);
-   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_BORDER_COLOR, g_MultiSymbolMode ? clrDodgerBlue : clrGray);
+   // === MODE TOGGLE BUTTON (Smart single toggle) ===
+   ObjectCreate(0, "SymMaster_ModeToggle", OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_XDISTANCE, DashboardXPos + 270);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_YDISTANCE, DashboardYPos + 45);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_XSIZE, 105);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_YSIZE, 30);
+   // Button shows what clicking it will DO (switch to the other mode)
+   ObjectSetString(0, "SymMaster_ModeToggle", OBJPROP_TEXT, g_MultiSymbolMode ? "🔄 SINGLE" : "🔄 MULTI");
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_BGCOLOR, clrDarkOliveGreen);
+   ObjectSetInteger(0, "SymMaster_ModeToggle", OBJPROP_BORDER_COLOR, clrGold);
 
    // Symbol name
    ObjectCreate(0, "SymMaster_Symbol", OBJ_LABEL, 0, 0, 0);
@@ -2053,23 +2292,25 @@ void UpdateMultiSymbolDashboards()
 
          if(tf.bias == 1)
          {
-            biasText = "🟢 BULLISH [" + IntegerToString(tf.confidence) + "]";
+            biasText = "🟢 B";
             textColor = clrLime;
          }
          else if(tf.bias == -1)
          {
-            biasText = "🔴 BEARISH [" + IntegerToString(tf.confidence) + "]";
+            biasText = "🔴 B";
             textColor = clrRed;
          }
          else
          {
-            biasText = "◯ NEUTRAL [" + IntegerToString(tf.confidence) + "]";
+            biasText = "◯ N";
             textColor = clrGray;
          }
 
-         string displayText = StringFormat("%s: %s | OB:%d/%d FVG:%d/%d",
+         // Compact format: "M5: 🟢 B [7] | OB:0/0"
+         string displayText = StringFormat("%s: %s [%d] | OB:%d/%d FVG:%d/%d",
                                            tf.tfName,
                                            biasText,
+                                           tf.confidence,
                                            tf.bullishOBCount, tf.bearishOBCount,
                                            tf.bullishFVGCount, tf.bearishFVGCount);
 
@@ -2354,15 +2595,32 @@ void DeleteDashboard()
    ObjectDelete(0, "SymMaster_StyleA");
    ObjectDelete(0, "SymMaster_StyleB");
    ObjectDelete(0, "SymMaster_StyleC");
+   ObjectDelete(0, "SymMaster_ModeToggle");  // Delete mode toggle button
 
-   
+   // Delete single-symbol timeframe buttons
    for(int i = 0; i < 7; i++)
    {
       ObjectDelete(0, "SymMaster_TFBtn_" + IntegerToString(i));
    }
-   
+
+   // Delete multi-symbol dashboard objects
+   for(int symIdx = 0; symIdx < MAX_MULTI_SYMBOLS; symIdx++)
+   {
+      string basePrefix = "SymMaster_Multi_" + IntegerToString(symIdx);
+
+      ObjectDelete(0, basePrefix + "_Panel");
+      ObjectDelete(0, basePrefix + "_Symbol");
+      ObjectDelete(0, basePrefix + "_Signal");
+
+      // Delete all timeframe labels for this symbol
+      for(int i = 0; i < 7; i++)
+      {
+         ObjectDelete(0, basePrefix + "_TF_" + IntegerToString(i));
+      }
+   }
+
    CloseMiniChart();
-   
+
    ChartRedraw();
 }
 
