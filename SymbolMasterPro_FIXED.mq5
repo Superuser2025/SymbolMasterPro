@@ -25,6 +25,20 @@ enum ENUM_SIGNAL_STYLE
 input group "=== SYMBOL SELECTION ==="
 input string TargetSymbol = "";  // Target Symbol (blank = current chart symbol)
 
+input group "=== MULTI-SYMBOL MODE ==="
+input bool EnableMultiSymbolMode = false;   // Enable Multi-Symbol Mode
+input string Symbol1 = "EURUSD";            // Symbol 1
+input string Symbol2 = "GBPUSD";            // Symbol 2
+input string Symbol3 = "USDJPY";            // Symbol 3
+input string Symbol4 = "AUDUSD";            // Symbol 4
+input string Symbol5 = "USDCAD";            // Symbol 5
+input string Symbol6 = "NZDUSD";            // Symbol 6
+input string Symbol7 = "EURGBP";            // Symbol 7
+input string Symbol8 = "EURJPY";            // Symbol 8
+input string Symbol9 = "GBPJPY";            // Symbol 9
+input string Symbol10 = "XAUUSD";           // Symbol 10
+input int MultiSymbolCompactSize = 180;     // Compact Dashboard Height
+
 input group "=== MULTI-TIMEFRAME ANALYSIS ==="
 input bool AnalyzeM1 = true;      // Analyze M1 Timeframe
 input bool AnalyzeM5 = true;      // Analyze M5 Timeframe
@@ -222,6 +236,24 @@ bool g_DashboardExpanded = true;
 int g_ActiveMiniChart = -1;  // Index of timeframe with open mini chart (-1 = none)
 bool g_ShowSignalArchive = true;  // Show signal archive panel
 
+// MULTI-SYMBOL MODE VARIABLES
+#define MAX_MULTI_SYMBOLS 10
+bool g_MultiSymbolMode = false;  // Runtime mode flag
+string g_MultiSymbols[MAX_MULTI_SYMBOLS];  // Array of symbols to analyze
+int g_MultiSymbolCount = 0;
+
+// Multi-symbol analysis data (10 symbols x 7 timeframes each)
+TimeframeAnalysis g_MultiTFAnalysis[MAX_MULTI_SYMBOLS][7];
+int g_MultiTrendMA_Handles[MAX_MULTI_SYMBOLS][7];
+int g_MultiATR_Handles[MAX_MULTI_SYMBOLS][7];
+
+// Multi-symbol signal tracking (10 symbols x 10 signals each)
+ConfluenceSignal g_MultiSignalHistory[MAX_MULTI_SYMBOLS][MAX_SIGNAL_HISTORY];
+int g_MultiSignalHistoryCount[MAX_MULTI_SYMBOLS];
+ConfluenceSignal g_MultiCurrentSignal[MAX_MULTI_SYMBOLS];
+bool g_MultiSignalActive[MAX_MULTI_SYMBOLS];
+datetime g_MultiLastSignalTime[MAX_MULTI_SYMBOLS];
+
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                          |
 //+------------------------------------------------------------------+
@@ -284,6 +316,53 @@ int OnInit()
    ArrayResize(g_SignalHistory, MAX_SIGNAL_HISTORY);
    g_SignalHistoryCount = 0;
    g_ShowSignalArchive = ShowSignalArchive;
+
+   // Initialize multi-symbol mode if enabled
+   g_MultiSymbolMode = EnableMultiSymbolMode;
+   if(g_MultiSymbolMode)
+   {
+      // Build symbol list
+      g_MultiSymbols[0] = Symbol1;
+      g_MultiSymbols[1] = Symbol2;
+      g_MultiSymbols[2] = Symbol3;
+      g_MultiSymbols[3] = Symbol4;
+      g_MultiSymbols[4] = Symbol5;
+      g_MultiSymbols[5] = Symbol6;
+      g_MultiSymbols[6] = Symbol7;
+      g_MultiSymbols[7] = Symbol8;
+      g_MultiSymbols[8] = Symbol9;
+      g_MultiSymbols[9] = Symbol10;
+      g_MultiSymbolCount = MAX_MULTI_SYMBOLS;
+
+      // Initialize all multi-symbol data
+      for(int symIdx = 0; symIdx < g_MultiSymbolCount; symIdx++)
+      {
+         // Initialize indicator handles for each symbol
+         for(int i = 0; i < g_ActiveTFCount; i++)
+         {
+            g_MultiTrendMA_Handles[symIdx][i] = iMA(g_MultiSymbols[symIdx], g_Timeframes[i], TrendMAPeriod, 0, MODE_EMA, PRICE_CLOSE);
+            g_MultiATR_Handles[symIdx][i] = iATR(g_MultiSymbols[symIdx], g_Timeframes[i], 14);
+
+            if(g_MultiTrendMA_Handles[symIdx][i] == INVALID_HANDLE || g_MultiATR_Handles[symIdx][i] == INVALID_HANDLE)
+            {
+               Print("WARNING: Failed to create indicators for ", g_MultiSymbols[symIdx]);
+            }
+
+            // Initialize timeframe analysis
+            g_MultiTFAnalysis[symIdx][i].timeframe = g_Timeframes[i];
+            g_MultiTFAnalysis[symIdx][i].tfName = GetTimeframeName(g_Timeframes[i]);
+            g_MultiTFAnalysis[symIdx][i].bias = 0;
+            g_MultiTFAnalysis[symIdx][i].confidence = 0;
+         }
+
+         // Initialize signal tracking
+         g_MultiSignalHistoryCount[symIdx] = 0;
+         g_MultiSignalActive[symIdx] = false;
+         g_MultiLastSignalTime[symIdx] = 0;
+      }
+
+      Print(">>> Multi-Symbol Mode ENABLED with ", g_MultiSymbolCount, " symbols");
+   }
 
    Print(">>> Symbol Master Pro initialized for ", g_Symbol, " with ", g_ActiveTFCount, " timeframes");
    Print(">>> Signal History System: ENABLED (Max ", MAX_SIGNAL_HISTORY, " signals)");
@@ -1661,7 +1740,32 @@ void CreateDashboard()
    ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BGCOLOR, clrDarkSlateGray);
    ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_BORDER_COLOR, clrGray);
-   
+
+   // === MODE TOGGLE BUTTONS (SINGLE/MULTI) ===
+   ObjectCreate(0, "SymMaster_ModeSingle", OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_XDISTANCE, DashboardXPos + 270);
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_YDISTANCE, DashboardYPos + 45);
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_XSIZE, 50);
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_YSIZE, 30);
+   ObjectSetString(0, "SymMaster_ModeSingle", OBJPROP_TEXT, "SINGLE");
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_BGCOLOR, g_MultiSymbolMode ? clrDarkSlateGray : clrDarkBlue);
+   ObjectSetInteger(0, "SymMaster_ModeSingle", OBJPROP_BORDER_COLOR, g_MultiSymbolMode ? clrGray : clrDodgerBlue);
+
+   ObjectCreate(0, "SymMaster_ModeMulti", OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_XDISTANCE, DashboardXPos + 325);
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_YDISTANCE, DashboardYPos + 45);
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_XSIZE, 50);
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_YSIZE, 30);
+   ObjectSetString(0, "SymMaster_ModeMulti", OBJPROP_TEXT, "MULTI");
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_BGCOLOR, g_MultiSymbolMode ? clrDarkBlue : clrDarkSlateGray);
+   ObjectSetInteger(0, "SymMaster_ModeMulti", OBJPROP_BORDER_COLOR, g_MultiSymbolMode ? clrDodgerBlue : clrGray);
+
    // Symbol name
    ObjectCreate(0, "SymMaster_Symbol", OBJ_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "SymMaster_Symbol", OBJPROP_CORNER, CORNER_LEFT_UPPER);
@@ -1847,6 +1951,151 @@ void UpdateDashboardVisibility()
          CloseMiniChart();
    }
    
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Create Multi-Symbol Compact Dashboards                          |
+//+------------------------------------------------------------------+
+void CreateMultiSymbolDashboards()
+{
+   int compactWidth = 200;
+   int compactHeight = MultiSymbolCompactSize;
+   int spacing = 10;
+   int columns = 2;  // 2 columns of dashboards
+
+   // Delete old single-symbol timeframe buttons
+   for(int i = 0; i < 7; i++)
+   {
+      ObjectDelete(0, "SymMaster_TFBtn_" + IntegerToString(i));
+   }
+
+   // Create compact dashboard for each symbol
+   for(int symIdx = 0; symIdx < g_MultiSymbolCount; symIdx++)
+   {
+      int row = symIdx / columns;
+      int col = symIdx % columns;
+
+      int boxX = DashboardXPos + 15 + (col * (compactWidth + spacing));
+      int boxY = DashboardYPos + 120 + (row * (compactHeight + spacing));
+
+      string basePrefix = "SymMaster_Multi_" + IntegerToString(symIdx);
+
+      // Create compact panel background
+      ObjectCreate(0, basePrefix + "_Panel", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_XDISTANCE, boxX);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_YDISTANCE, boxY);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_XSIZE, compactWidth);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_YSIZE, compactHeight);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_BGCOLOR, C'30,30,40');
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_COLOR, clrDarkGray);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_WIDTH, 2);
+      ObjectSetInteger(0, basePrefix + "_Panel", OBJPROP_BACK, false);
+
+      // Symbol name header
+      ObjectCreate(0, basePrefix + "_Symbol", OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, basePrefix + "_Symbol", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, basePrefix + "_Symbol", OBJPROP_XDISTANCE, boxX + 10);
+      ObjectSetInteger(0, basePrefix + "_Symbol", OBJPROP_YDISTANCE, boxY + 8);
+      ObjectSetString(0, basePrefix + "_Symbol", OBJPROP_TEXT, g_MultiSymbols[symIdx]);
+      ObjectSetInteger(0, basePrefix + "_Symbol", OBJPROP_COLOR, clrGold);
+      ObjectSetInteger(0, basePrefix + "_Symbol", OBJPROP_FONTSIZE, 10);
+      ObjectSetString(0, basePrefix + "_Symbol", OBJPROP_FONT, "Arial Bold");
+
+      // Timeframe rows (compact layout)
+      int tfY = boxY + 30;
+      for(int i = 0; i < g_ActiveTFCount; i++)
+      {
+         ObjectCreate(0, basePrefix + "_TF_" + IntegerToString(i), OBJ_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_XDISTANCE, boxX + 10);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_YDISTANCE, tfY + (i * 17));
+         ObjectSetString(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_TEXT, "M1: ◯ NEUTRAL");
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_COLOR, clrGray);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_FONTSIZE, 8);
+         ObjectSetString(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_FONT, "Arial");
+      }
+
+      // Signal status at bottom
+      int signalY = boxY + compactHeight - 25;
+      ObjectCreate(0, basePrefix + "_Signal", OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, basePrefix + "_Signal", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, basePrefix + "_Signal", OBJPROP_XDISTANCE, boxX + 10);
+      ObjectSetInteger(0, basePrefix + "_Signal", OBJPROP_YDISTANCE, signalY);
+      ObjectSetString(0, basePrefix + "_Signal", OBJPROP_TEXT, "Signal: Waiting...");
+      ObjectSetInteger(0, basePrefix + "_Signal", OBJPROP_COLOR, clrYellow);
+      ObjectSetInteger(0, basePrefix + "_Signal", OBJPROP_FONTSIZE, 8);
+      ObjectSetString(0, basePrefix + "_Signal", OBJPROP_FONT, "Arial Bold");
+   }
+
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Update Multi-Symbol Dashboards                                   |
+//+------------------------------------------------------------------+
+void UpdateMultiSymbolDashboards()
+{
+   for(int symIdx = 0; symIdx < g_MultiSymbolCount; symIdx++)
+   {
+      string basePrefix = "SymMaster_Multi_" + IntegerToString(symIdx);
+
+      // Update each timeframe display
+      for(int i = 0; i < g_ActiveTFCount; i++)
+      {
+         string objName = basePrefix + "_TF_" + IntegerToString(i);
+         TimeframeAnalysis tf = g_MultiTFAnalysis[symIdx][i];
+
+         string biasText = "";
+         color textColor = clrGray;
+
+         if(tf.bias == 1)
+         {
+            biasText = "🟢 BULLISH [" + IntegerToString(tf.confidence) + "]";
+            textColor = clrLime;
+         }
+         else if(tf.bias == -1)
+         {
+            biasText = "🔴 BEARISH [" + IntegerToString(tf.confidence) + "]";
+            textColor = clrRed;
+         }
+         else
+         {
+            biasText = "◯ NEUTRAL [" + IntegerToString(tf.confidence) + "]";
+            textColor = clrGray;
+         }
+
+         string displayText = StringFormat("%s: %s | OB:%d/%d FVG:%d/%d",
+                                           tf.tfName,
+                                           biasText,
+                                           tf.bullishOBCount, tf.bearishOBCount,
+                                           tf.bullishFVGCount, tf.bearishFVGCount);
+
+         ObjectSetString(0, objName, OBJPROP_TEXT, displayText);
+         ObjectSetInteger(0, objName, OBJPROP_COLOR, textColor);
+      }
+
+      // Update signal status
+      string signalObjName = basePrefix + "_Signal";
+      if(g_MultiSignalActive[symIdx])
+      {
+         ConfluenceSignal signal = g_MultiCurrentSignal[symIdx];
+         string signalText = StringFormat("✓ %s %s [%d]",
+                                          signal.perspectiveText,
+                                          signal.isBuy ? "BUY" : "SELL",
+                                          signal.confluenceScore);
+         ObjectSetString(0, signalObjName, OBJPROP_TEXT, signalText);
+         ObjectSetInteger(0, signalObjName, OBJPROP_COLOR, signal.isBuy ? clrLime : clrRed);
+      }
+      else
+      {
+         ObjectSetString(0, signalObjName, OBJPROP_TEXT, "Signal: Waiting...");
+         ObjectSetInteger(0, signalObjName, OBJPROP_COLOR, clrYellow);
+      }
+   }
+
    ChartRedraw();
 }
 
