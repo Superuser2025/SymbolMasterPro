@@ -406,6 +406,21 @@ int g_ADX_Handle = INVALID_HANDLE;
 bool g_TradePanelVisible = false;
 datetime g_TradePanelSignalTime = 0;
 
+// RUNTIME FEATURE TOGGLES (ON-SCREEN CONTROLS)
+bool g_Runtime_DynamicSLTP = true;      // Feature #1
+bool g_Runtime_PositionSizing = true;   // Feature #2
+bool g_Runtime_WinRateTracker = true;   // Feature #3
+bool g_Runtime_SessionFilter = true;    // Feature #4
+bool g_Runtime_NewsFilter = true;       // Feature #5
+bool g_Runtime_VolatilityFilter = true; // Feature #6
+bool g_Runtime_HTFTrendFilter = true;   // Feature #7
+bool g_Runtime_SRDetection = true;      // Feature #8
+bool g_Runtime_TrailingStops = false;   // Feature #9 (not fully implemented)
+bool g_Runtime_TradePanel = true;       // Feature #10
+
+// Feature Control Panel State
+bool g_FeaturePanelVisible = true;
+
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                          |
 //+------------------------------------------------------------------+
@@ -982,6 +997,118 @@ void OnChartEvent(const int id,
          return;
       }
       // ========== END FEATURE #10 ==========
+
+      // ========== FEATURE CONTROL PANEL BUTTON HANDLERS ==========
+      // Feature #1: Dynamic SL/TP
+      if(sparam == "SymMaster_Feature1_SLTP")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_DynamicSLTP = !g_Runtime_DynamicSLTP;
+         UpdateFeatureButton("Feature1_SLTP", g_Runtime_DynamicSLTP);
+         Print(">>> Feature #1 (Dynamic SL/TP): ", g_Runtime_DynamicSLTP ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #2: Position Sizing
+      if(sparam == "SymMaster_Feature2_PosSizing")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_PositionSizing = !g_Runtime_PositionSizing;
+         UpdateFeatureButton("Feature2_PosSizing", g_Runtime_PositionSizing);
+         Print(">>> Feature #2 (Position Sizing): ", g_Runtime_PositionSizing ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #3: Win Rate Tracker
+      if(sparam == "SymMaster_Feature3_WinRate")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_WinRateTracker = !g_Runtime_WinRateTracker;
+         UpdateFeatureButton("Feature3_WinRate", g_Runtime_WinRateTracker);
+         Print(">>> Feature #3 (Win Rate Tracker): ", g_Runtime_WinRateTracker ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #4: Session Filter
+      if(sparam == "SymMaster_Feature4_Session")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_SessionFilter = !g_Runtime_SessionFilter;
+         UpdateFeatureButton("Feature4_Session", g_Runtime_SessionFilter);
+         Print(">>> Feature #4 (Session Filter): ", g_Runtime_SessionFilter ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #5: News Blocker
+      if(sparam == "SymMaster_Feature5_News")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_NewsFilter = !g_Runtime_NewsFilter;
+         UpdateFeatureButton("Feature5_News", g_Runtime_NewsFilter);
+         Print(">>> Feature #5 (News Blocker): ", g_Runtime_NewsFilter ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #6: Volatility Filter
+      if(sparam == "SymMaster_Feature6_Volatility")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_VolatilityFilter = !g_Runtime_VolatilityFilter;
+         UpdateFeatureButton("Feature6_Volatility", g_Runtime_VolatilityFilter);
+         Print(">>> Feature #6 (Volatility Filter): ", g_Runtime_VolatilityFilter ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #7: HTF Trend Filter
+      if(sparam == "SymMaster_Feature7_HTF")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_HTFTrendFilter = !g_Runtime_HTFTrendFilter;
+         UpdateFeatureButton("Feature7_HTF", g_Runtime_HTFTrendFilter);
+         Print(">>> Feature #7 (HTF Trend Filter): ", g_Runtime_HTFTrendFilter ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #8: S/R Detection
+      if(sparam == "SymMaster_Feature8_SR")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_SRDetection = !g_Runtime_SRDetection;
+         UpdateFeatureButton("Feature8_SR", g_Runtime_SRDetection);
+         Print(">>> Feature #8 (S/R Detection): ", g_Runtime_SRDetection ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #9: Trailing Stops
+      if(sparam == "SymMaster_Feature9_Trailing")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_TrailingStops = !g_Runtime_TrailingStops;
+         UpdateFeatureButton("Feature9_Trailing", g_Runtime_TrailingStops);
+         Print(">>> Feature #9 (Trailing Stops): ", g_Runtime_TrailingStops ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+
+      // Feature #10: Trade Panel
+      if(sparam == "SymMaster_Feature10_TradePanel")
+      {
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         g_Runtime_TradePanel = !g_Runtime_TradePanel;
+         UpdateFeatureButton("Feature10_TradePanel", g_Runtime_TradePanel);
+         Print(">>> Feature #10 (Trade Panel): ", g_Runtime_TradePanel ? "ENABLED ✅" : "DISABLED ❌");
+         ChartRedraw();
+         return;
+      }
+      // ========== END FEATURE CONTROL PANEL ==========
    }
 }
 
@@ -994,7 +1121,7 @@ void OnChartEvent(const int id,
 //+------------------------------------------------------------------+
 double CalculateDynamicStopLoss(string symbol, ENUM_TIMEFRAMES timeframe, bool isBuy, double entryPrice)
 {
-   if(!EnableDynamicSLTP) return 0.0;
+   if(!EnableDynamicSLTP || !g_Runtime_DynamicSLTP) return 0.0;
 
    double stopLoss = 0.0;
    double atrStopLoss = 0.0;
@@ -1076,7 +1203,7 @@ double CalculateDynamicStopLoss(string symbol, ENUM_TIMEFRAMES timeframe, bool i
 //+------------------------------------------------------------------+
 void CalculateMultipleTakeProfits(TradeParameters &params)
 {
-   if(!EnableDynamicSLTP) return;
+   if(!EnableDynamicSLTP || !g_Runtime_DynamicSLTP) return;
 
    double riskDistance = MathAbs(params.entryPrice - params.stopLoss);
    params.riskInPips = riskDistance / (_Point * 10);
@@ -1109,7 +1236,7 @@ void CalculateMultipleTakeProfits(TradeParameters &params)
 //+------------------------------------------------------------------+
 void DrawSLTPLevelsOnChart(TradeParameters &params)
 {
-   if(!EnableDynamicSLTP || !DrawSLTPLevels) return;
+   if(!EnableDynamicSLTP || !g_Runtime_DynamicSLTP || !DrawSLTPLevels) return;
 
    string prefix = "SymMaster_SLTP_";
 
@@ -1199,7 +1326,7 @@ void ClearSLTPLevels()
 //+------------------------------------------------------------------+
 double CalculatePositionSize(string symbol, double entryPrice, double stopLoss, double riskPercent)
 {
-   if(!EnablePositionSizing || !AutoCalculateLotSize) return MinLotSize;
+   if(!EnablePositionSizing || !g_Runtime_PositionSizing || !AutoCalculateLotSize) return MinLotSize;
 
    // Get account balance
    double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -1247,7 +1374,7 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss, 
 //+------------------------------------------------------------------+
 double GetDailyRiskUsed()
 {
-   if(!EnablePositionSizing) return 0.0;
+   if(!EnablePositionSizing || !g_Runtime_PositionSizing) return 0.0;
 
    double totalRiskUsed = 0.0;
    datetime todayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
@@ -1294,7 +1421,7 @@ double GetDailyRiskUsed()
 //+------------------------------------------------------------------+
 bool IsDailyRiskLimitExceeded(double additionalRiskPercent)
 {
-   if(!EnablePositionSizing) return false;
+   if(!EnablePositionSizing || !g_Runtime_PositionSizing) return false;
 
    double currentRiskUsed = GetDailyRiskUsed();
    double totalRisk = currentRiskUsed + additionalRiskPercent;
@@ -1320,7 +1447,7 @@ bool IsDailyRiskLimitExceeded(double additionalRiskPercent)
 //+------------------------------------------------------------------+
 void CreateTradePanel(TradeParameters &params)
 {
-   if(!EnableTradePanel) return;
+   if(!EnableTradePanel || !g_Runtime_TradePanel) return;
 
    string prefix = "SymMaster_TradePanel_";
 
@@ -1486,7 +1613,7 @@ void HideTradePanel()
 //+------------------------------------------------------------------+
 bool ExecuteTrade(TradeParameters &params)
 {
-   if(!EnableTradePanel) return false;
+   if(!EnableTradePanel || !g_Runtime_TradePanel) return false;
 
    MqlTradeRequest request;
    MqlTradeResult result;
@@ -1557,7 +1684,7 @@ bool ExecuteTrade(TradeParameters &params)
 //+------------------------------------------------------------------+
 bool IsSessionAllowed()
 {
-   if(!EnableSessionFilter) return true;
+   if(!EnableSessionFilter || !g_Runtime_SessionFilter) return true;
 
    MqlDateTime dt;
    TimeToStruct(TimeGMT(), dt);
@@ -1602,7 +1729,7 @@ bool IsSessionAllowed()
 //+------------------------------------------------------------------+
 bool PassesVolatilityFilter(ENUM_TIMEFRAMES timeframe)
 {
-   if(!EnableVolatilityFilter) return true;
+   if(!EnableVolatilityFilter || !g_Runtime_VolatilityFilter) return true;
 
    // Get ADX
    double adx[];
@@ -1657,7 +1784,7 @@ bool PassesVolatilityFilter(ENUM_TIMEFRAMES timeframe)
 //+------------------------------------------------------------------+
 bool PassesHTFTrendFilter(bool isBuySignal)
 {
-   if(!EnableHTFTrendFilter) return true;
+   if(!EnableHTFTrendFilter || !g_Runtime_HTFTrendFilter) return true;
 
    int htfAligned = 0;
    int htfTotal = 0;
@@ -1723,7 +1850,7 @@ bool PassesHTFTrendFilter(bool isBuySignal)
 //+------------------------------------------------------------------+
 bool IsNearSupportResistance(double price, bool isBuySignal)
 {
-   if(!EnableSRDetection) return true;  // Pass if disabled
+   if(!EnableSRDetection || !g_Runtime_SRDetection) return true;  // Pass if disabled
    if(!RequireSRConfluence) return true;  // Pass if not required
 
    double zonePips = SRZoneThicknessPips * _Point * 10;
@@ -1782,7 +1909,7 @@ bool IsNearSupportResistance(double price, bool isBuySignal)
 //+------------------------------------------------------------------+
 void UpdatePerformanceStats(bool signalWon)
 {
-   if(!EnablePerformanceTracking) return;
+   if(!EnablePerformanceTracking || !g_Runtime_WinRateTracker) return;
 
    g_TotalSignals++;
 
@@ -1805,7 +1932,7 @@ void UpdatePerformanceStats(bool signalWon)
 //+------------------------------------------------------------------+
 bool IsNewsEventNear()
 {
-   if(!EnableNewsFilter) return false;
+   if(!EnableNewsFilter || !g_Runtime_NewsFilter) return false;
 
    // Simple time-based news blocker
    // Blocks trading during typical high-impact news times
@@ -3471,8 +3598,145 @@ void CreateDashboard()
    
    // Initialize signal panel with current style
    UpdateSignalPanel();
-   
+
+   // Create feature control panel
+   CreateFeatureControlPanel();
+
    ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Create Feature Control Panel (ON-SCREEN TOGGLES)                 |
+//+------------------------------------------------------------------+
+void CreateFeatureControlPanel()
+{
+   if(!g_FeaturePanelVisible) return;
+
+   int panelX = DashboardXPos + 420;  // To the right of main dashboard
+   int panelY = DashboardYPos;
+   int panelWidth = 280;
+   int buttonHeight = 30;
+   int spacing = 5;
+   int panelHeight = 60 + (10 * (buttonHeight + spacing));
+
+   // Main feature panel background
+   ObjectCreate(0, "SymMaster_FeaturePanel", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_XDISTANCE, panelX);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_YDISTANCE, panelY);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_XSIZE, panelWidth);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_YSIZE, panelHeight);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_BGCOLOR, C'30,30,40');
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, "SymMaster_FeaturePanel", OBJPROP_BACK, false);
+
+   // Title
+   ObjectCreate(0, "SymMaster_FeatureTitle", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, "SymMaster_FeatureTitle", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "SymMaster_FeatureTitle", OBJPROP_XDISTANCE, panelX + 10);
+   ObjectSetInteger(0, "SymMaster_FeatureTitle", OBJPROP_YDISTANCE, panelY + 10);
+   ObjectSetString(0, "SymMaster_FeatureTitle", OBJPROP_TEXT, "💎 PROFIT FEATURES");
+   ObjectSetInteger(0, "SymMaster_FeatureTitle", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, "SymMaster_FeatureTitle", OBJPROP_FONTSIZE, 11);
+   ObjectSetString(0, "SymMaster_FeatureTitle", OBJPROP_FONT, "Arial Bold");
+
+   int btnY = panelY + 45;
+
+   // Feature #1: Dynamic SL/TP
+   CreateFeatureButton("Feature1_SLTP", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "💎 Dynamic SL/TP", g_Runtime_DynamicSLTP);
+   btnY += buttonHeight + spacing;
+
+   // Feature #2: Position Sizing
+   CreateFeatureButton("Feature2_PosSizing", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "💰 Position Sizing", g_Runtime_PositionSizing);
+   btnY += buttonHeight + spacing;
+
+   // Feature #3: Win Rate Tracker
+   CreateFeatureButton("Feature3_WinRate", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "📈 Win Rate Tracker", g_Runtime_WinRateTracker);
+   btnY += buttonHeight + spacing;
+
+   // Feature #4: Session Filter
+   CreateFeatureButton("Feature4_Session", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "⏰ Session Filter", g_Runtime_SessionFilter);
+   btnY += buttonHeight + spacing;
+
+   // Feature #5: News Blocker
+   CreateFeatureButton("Feature5_News", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "📰 News Blocker", g_Runtime_NewsFilter);
+   btnY += buttonHeight + spacing;
+
+   // Feature #6: Volatility Filter
+   CreateFeatureButton("Feature6_Volatility", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "📊 Volatility Filter", g_Runtime_VolatilityFilter);
+   btnY += buttonHeight + spacing;
+
+   // Feature #7: HTF Trend Filter
+   CreateFeatureButton("Feature7_HTF", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "📈 HTF Trend Filter", g_Runtime_HTFTrendFilter);
+   btnY += buttonHeight + spacing;
+
+   // Feature #8: S/R Detection
+   CreateFeatureButton("Feature8_SR", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "🎯 S/R Detection", g_Runtime_SRDetection);
+   btnY += buttonHeight + spacing;
+
+   // Feature #9: Trailing Stops (disabled for now)
+   CreateFeatureButton("Feature9_Trailing", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "🛡️ Trailing Stops", g_Runtime_TrailingStops);
+   btnY += buttonHeight + spacing;
+
+   // Feature #10: Trade Panel
+   CreateFeatureButton("Feature10_TradePanel", panelX, btnY, panelWidth - 20, buttonHeight,
+                       "🚀 Trade Panel", g_Runtime_TradePanel);
+}
+
+//+------------------------------------------------------------------+
+//| Create Individual Feature Button                                 |
+//+------------------------------------------------------------------+
+void CreateFeatureButton(string name, int x, int y, int width, int height, string text, bool isEnabled)
+{
+   string objName = "SymMaster_" + name;
+
+   ObjectCreate(0, objName, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x + 10);
+   ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, objName, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, objName, OBJPROP_YSIZE, height);
+   ObjectSetString(0, objName, OBJPROP_TEXT, text + (isEnabled ? " ✅" : " ❌"));
+   ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, objName, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, isEnabled ? clrDarkGreen : clrDarkRed);
+   ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, isEnabled ? clrLime : clrRed);
+   ObjectSetInteger(0, objName, OBJPROP_STATE, false);
+}
+
+//+------------------------------------------------------------------+
+//| Update Feature Button State                                      |
+//+------------------------------------------------------------------+
+void UpdateFeatureButton(string name, bool isEnabled)
+{
+   string objName = "SymMaster_" + name;
+
+   // Get current text and strip old status
+   string currentText = ObjectGetString(0, objName, OBJPROP_TEXT);
+   int checkPos = StringFind(currentText, " ✅");
+   int crossPos = StringFind(currentText, " ❌");
+
+   string baseText = currentText;
+   if(checkPos >= 0)
+      baseText = StringSubstr(currentText, 0, checkPos);
+   else if(crossPos >= 0)
+      baseText = StringSubstr(currentText, 0, crossPos);
+
+   // Set new text with status
+   ObjectSetString(0, objName, OBJPROP_TEXT, baseText + (isEnabled ? " ✅" : " ❌"));
+   ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, isEnabled ? clrDarkGreen : clrDarkRed);
+   ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, isEnabled ? clrLime : clrRed);
 }
 
 //+------------------------------------------------------------------+
