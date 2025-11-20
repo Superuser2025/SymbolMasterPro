@@ -494,9 +494,14 @@ void OnChartEvent(const int id,
       // Check if timeframe button clicked (single-symbol mode)
       if(StringFind(sparam, "SymMaster_TFBtn_") >= 0)
       {
+         // CRITICAL: Deselect button immediately to allow future clicks
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+
          // Extract timeframe index
          string indexStr = StringSubstr(sparam, 16);
          int tfIndex = (int)StringToInteger(indexStr);
+
+         Print(">>> Single-mode TF button clicked: ", sparam, " tfIndex=", tfIndex);
 
          if(tfIndex >= 0 && tfIndex < g_ActiveTFCount)
          {
@@ -504,6 +509,7 @@ void OnChartEvent(const int id,
             if(g_ActiveMiniChart == tfIndex)
             {
                // Close currently open mini chart
+               Print(">>> Closing mini chart for TF ", tfIndex);
                CloseMiniChart();
             }
             else
@@ -512,6 +518,7 @@ void OnChartEvent(const int id,
                if(g_ActiveMiniChart >= 0)
                   CloseMiniChart();
 
+               Print(">>> Opening mini chart for ", g_Symbol, " ", g_TFAnalysis[tfIndex].tfName);
                g_ActiveMiniChart = tfIndex;
                CreateMiniChart(g_Symbol, g_TFAnalysis[tfIndex].timeframe, g_TFAnalysis[tfIndex].tfName, g_TFAnalysis[tfIndex]);
             }
@@ -522,7 +529,10 @@ void OnChartEvent(const int id,
       // Check if multi-symbol timeframe button clicked (multi-symbol mode)
       if(StringFind(sparam, "SymMaster_Multi_") >= 0 && StringFind(sparam, "_TF_") >= 0)
       {
-         Print(">>> Multi-symbol TF button clicked!");
+         // CRITICAL: Deselect button immediately to allow future clicks
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+
+         Print(">>> Multi-symbol TF button clicked: ", sparam);
 
          // Extract symbol index and timeframe index from "SymMaster_Multi_X_TF_Y"
          int multiPos = StringFind(sparam, "SymMaster_Multi_");
@@ -547,6 +557,8 @@ void OnChartEvent(const int id,
             // Open mini chart for this symbol and timeframe
             g_ActiveMiniChart = tfIdx;  // Store which TF is active
             CreateMiniChart(g_MultiSymbols[symIdx], g_MultiTFAnalysis[symIdx][tfIdx].timeframe, g_MultiTFAnalysis[symIdx][tfIdx].tfName, g_MultiTFAnalysis[symIdx][tfIdx]);
+
+            Print(">>> Mini chart created successfully!");
          }
          else
          {
@@ -565,6 +577,9 @@ void OnChartEvent(const int id,
       // Style button clicks
       if(sparam == "SymMaster_StyleA")
       {
+         // CRITICAL: Deselect button immediately
+         ObjectSetInteger(0, "SymMaster_StyleA", OBJPROP_STATE, false);
+
          // Update button visual states
          ObjectSetInteger(0, "SymMaster_StyleA", OBJPROP_BGCOLOR, clrDarkGreen);
          ObjectSetInteger(0, "SymMaster_StyleA", OBJPROP_BORDER_COLOR, clrLime);
@@ -589,6 +604,9 @@ void OnChartEvent(const int id,
 
       if(sparam == "SymMaster_StyleB")
       {
+         // CRITICAL: Deselect button immediately
+         ObjectSetInteger(0, "SymMaster_StyleB", OBJPROP_STATE, false);
+
          // Update button visual states
          ObjectSetInteger(0, "SymMaster_StyleA", OBJPROP_BGCOLOR, clrDarkSlateGray);
          ObjectSetInteger(0, "SymMaster_StyleA", OBJPROP_BORDER_COLOR, clrGray);
@@ -613,6 +631,9 @@ void OnChartEvent(const int id,
 
       if(sparam == "SymMaster_StyleC")
       {
+         // CRITICAL: Deselect button immediately
+         ObjectSetInteger(0, "SymMaster_StyleC", OBJPROP_STATE, false);
+
          // Update button visual states
          ObjectSetInteger(0, "SymMaster_StyleA", OBJPROP_BGCOLOR, clrDarkSlateGray);
          ObjectSetInteger(0, "SymMaster_StyleA", OBJPROP_BORDER_COLOR, clrGray);
@@ -639,6 +660,10 @@ void OnChartEvent(const int id,
       if(sparam == "SymMaster_ModeToggle" || sparam == "SymMaster_ModeToggleBG")
       {
          Print(">>> MODE TOGGLE CLICKED! Current mode: ", g_MultiSymbolMode ? "MULTI" : "SINGLE");
+
+         // CRITICAL: Deselect the clicked object BEFORE deletion to avoid MT5 confusion
+         ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_SELECTED, false);
+         ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_STATE, false);
 
          // Toggle the mode
          g_MultiSymbolMode = !g_MultiSymbolMode;
@@ -715,8 +740,16 @@ void OnChartEvent(const int id,
             UpdateDashboard();
          }
 
-         // Update the toggle button text
+         // Update the toggle button text (already set by CreateDashboard, but update to be sure)
          ObjectSetString(0, "SymMaster_ModeToggle", OBJPROP_TEXT, g_MultiSymbolMode ? "🔄 SINGLE" : "🔄 MULTI");
+
+         // Ensure toggle button is clickable
+         ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_SELECTABLE, true);
+         ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_SELECTED, false);
+         ObjectSetInteger(0, "SymMaster_ModeToggleBG", OBJPROP_STATE, false);
+
+         Print(">>> Mode switch COMPLETE. New mode: ", g_MultiSymbolMode ? "MULTI" : "SINGLE");
+         Print(">>> Toggle button recreated and ready for next click");
 
          ChartRedraw();
          return;
