@@ -488,13 +488,13 @@ void OnChartEvent(const int id,
          return;
       }
       
-      // Check if timeframe button clicked
+      // Check if timeframe button clicked (single-symbol mode)
       if(StringFind(sparam, "SymMaster_TFBtn_") >= 0)
       {
          // Extract timeframe index
          string indexStr = StringSubstr(sparam, 16);
          int tfIndex = (int)StringToInteger(indexStr);
-         
+
          if(tfIndex >= 0 && tfIndex < g_ActiveTFCount)
          {
             // Toggle mini chart
@@ -508,10 +508,36 @@ void OnChartEvent(const int id,
                // Close any open mini chart and open new one
                if(g_ActiveMiniChart >= 0)
                   CloseMiniChart();
-               
+
                g_ActiveMiniChart = tfIndex;
-               CreateMiniChart(tfIndex);
+               CreateMiniChart(g_Symbol, g_TFAnalysis[tfIndex].timeframe, g_TFAnalysis[tfIndex].tfName);
             }
+         }
+         return;
+      }
+
+      // Check if multi-symbol timeframe button clicked (multi-symbol mode)
+      if(StringFind(sparam, "SymMaster_Multi_") >= 0 && StringFind(sparam, "_TF_") >= 0)
+      {
+         // Extract symbol index and timeframe index from "SymMaster_Multi_X_TF_Y"
+         int multiPos = StringFind(sparam, "SymMaster_Multi_");
+         int tfPos = StringFind(sparam, "_TF_");
+
+         string symIdxStr = StringSubstr(sparam, 16, tfPos - 16);  // After "SymMaster_Multi_"
+         string tfIdxStr = StringSubstr(sparam, tfPos + 4);        // After "_TF_"
+
+         int symIdx = (int)StringToInteger(symIdxStr);
+         int tfIdx = (int)StringToInteger(tfIdxStr);
+
+         if(symIdx >= 0 && symIdx < g_MultiSymbolCount && tfIdx >= 0 && tfIdx < g_ActiveTFCount)
+         {
+            // Close any open mini chart
+            if(g_ActiveMiniChart >= 0)
+               CloseMiniChart();
+
+            // Open mini chart for this symbol and timeframe
+            g_ActiveMiniChart = tfIdx;  // Store which TF is active
+            CreateMiniChart(g_MultiSymbols[symIdx], g_MultiTFAnalysis[symIdx][tfIdx].timeframe, g_MultiTFAnalysis[symIdx][tfIdx].tfName);
          }
          return;
       }
@@ -2328,17 +2354,21 @@ void CreateMultiSymbolDashboards()
       ObjectSetInteger(0, basePrefix + "_Symbol", OBJPROP_FONTSIZE, 10);
       ObjectSetString(0, basePrefix + "_Symbol", OBJPROP_FONT, "Arial Bold");
 
-      // Timeframe rows (compact layout)
+      // Timeframe rows (compact layout) - CLICKABLE BUTTONS for mini charts
       int tfY = boxY + 30;
       for(int i = 0; i < g_ActiveTFCount; i++)
       {
-         ObjectCreate(0, basePrefix + "_TF_" + IntegerToString(i), OBJ_LABEL, 0, 0, 0);
+         ObjectCreate(0, basePrefix + "_TF_" + IntegerToString(i), OBJ_BUTTON, 0, 0, 0);
          ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_CORNER, CORNER_LEFT_UPPER);
-         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_XDISTANCE, boxX + 10);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_XDISTANCE, boxX + 5);
          ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_YDISTANCE, tfY + (i * 17));
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_XSIZE, compactWidth - 10);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_YSIZE, 15);
          ObjectSetString(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_TEXT, "M1: ◯ NEUTRAL");
-         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_COLOR, clrGray);
-         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_FONTSIZE, 8);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_COLOR, clrWhite);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_BGCOLOR, clrDarkSlateGray);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_BORDER_COLOR, clrGray);
+         ObjectSetInteger(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_FONTSIZE, 7);
          ObjectSetString(0, basePrefix + "_TF_" + IntegerToString(i), OBJPROP_FONT, "Arial");
       }
 
@@ -2366,29 +2396,33 @@ void UpdateMultiSymbolDashboards()
    {
       string basePrefix = "SymMaster_Multi_" + IntegerToString(symIdx);
 
-      // Update each timeframe display
+      // Update each timeframe display (now buttons)
       for(int i = 0; i < g_ActiveTFCount; i++)
       {
          string objName = basePrefix + "_TF_" + IntegerToString(i);
          TimeframeAnalysis tf = g_MultiTFAnalysis[symIdx][i];
 
          string biasText = "";
-         color textColor = clrGray;
+         color textColor = clrWhite;
+         color bgColor = clrDarkSlateGray;
 
          if(tf.bias == 1)
          {
             biasText = "🟢 B";
-            textColor = clrLime;
+            textColor = clrWhite;
+            bgColor = clrDarkGreen;
          }
          else if(tf.bias == -1)
          {
             biasText = "🔴 B";
-            textColor = clrRed;
+            textColor = clrWhite;
+            bgColor = clrDarkRed;
          }
          else
          {
             biasText = "◯ N";
-            textColor = clrGray;
+            textColor = clrWhite;
+            bgColor = clrDarkSlateGray;
          }
 
          // Compact format: "M5: 🟢 B [7] | OB:0/0"
@@ -2401,6 +2435,7 @@ void UpdateMultiSymbolDashboards()
 
          ObjectSetString(0, objName, OBJPROP_TEXT, displayText);
          ObjectSetInteger(0, objName, OBJPROP_COLOR, textColor);
+         ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgColor);
       }
 
       // Update signal status
@@ -2474,15 +2509,13 @@ void UpdateSignalPanel()
 //+------------------------------------------------------------------+
 //| Create Mini Chart Window                                         |
 //+------------------------------------------------------------------+
-void CreateMiniChart(int tfIndex)
+void CreateMiniChart(string symbol, ENUM_TIMEFRAMES timeframe, string tfName)
 {
-   if(tfIndex < 0 || tfIndex >= g_ActiveTFCount) return;
-   
    int miniWidth = 420;
    int miniHeight = 320;
    int miniX = DashboardXPos + 400;
    int miniY = DashboardYPos;
-   
+
    // Background panel
    ObjectCreate(0, "SymMaster_MiniPanel", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "SymMaster_MiniPanel", OBJPROP_CORNER, CORNER_LEFT_UPPER);
@@ -2496,9 +2529,9 @@ void CreateMiniChart(int tfIndex)
    ObjectSetInteger(0, "SymMaster_MiniPanel", OBJPROP_WIDTH, 2);
    ObjectSetInteger(0, "SymMaster_MiniPanel", OBJPROP_BACK, false);
    ObjectSetInteger(0, "SymMaster_MiniPanel", OBJPROP_SELECTABLE, false);
-   
+
    // Title
-   string title = "📊 " + g_TFAnalysis[tfIndex].tfName + " Chart - " + g_Symbol;
+   string title = "📊 " + tfName + " Chart - " + symbol;
    ObjectCreate(0, "SymMaster_MiniTitle", OBJ_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "SymMaster_MiniTitle", OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, "SymMaster_MiniTitle", OBJPROP_XDISTANCE, miniX + 15);
@@ -2507,7 +2540,7 @@ void CreateMiniChart(int tfIndex)
    ObjectSetInteger(0, "SymMaster_MiniTitle", OBJPROP_COLOR, clrGold);
    ObjectSetInteger(0, "SymMaster_MiniTitle", OBJPROP_FONTSIZE, 11);
    ObjectSetString(0, "SymMaster_MiniTitle", OBJPROP_FONT, "Arial Bold");
-   
+
    // Close button
    ObjectCreate(0, "SymMaster_MiniClose", OBJ_BUTTON, 0, 0, 0);
    ObjectSetInteger(0, "SymMaster_MiniClose", OBJPROP_CORNER, CORNER_LEFT_UPPER);
@@ -2520,19 +2553,19 @@ void CreateMiniChart(int tfIndex)
    ObjectSetInteger(0, "SymMaster_MiniClose", OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, "SymMaster_MiniClose", OBJPROP_BGCOLOR, clrDarkRed);
    ObjectSetInteger(0, "SymMaster_MiniClose", OBJPROP_BORDER_COLOR, clrRed);
-   
+
    // Get price data for the timeframe
    double open[], high[], low[], close[];
    ArraySetAsSeries(open, true);
    ArraySetAsSeries(high, true);
    ArraySetAsSeries(low, true);
    ArraySetAsSeries(close, true);
-   
+
    int bars = 30;
-   CopyOpen(g_Symbol, g_TFAnalysis[tfIndex].timeframe, 0, bars, open);
-   CopyHigh(g_Symbol, g_TFAnalysis[tfIndex].timeframe, 0, bars, high);
-   CopyLow(g_Symbol, g_TFAnalysis[tfIndex].timeframe, 0, bars, low);
-   CopyClose(g_Symbol, g_TFAnalysis[tfIndex].timeframe, 0, bars, close);
+   CopyOpen(symbol, timeframe, 0, bars, open);
+   CopyHigh(symbol, timeframe, 0, bars, high);
+   CopyLow(symbol, timeframe, 0, bars, low);
+   CopyClose(symbol, timeframe, 0, bars, close);
    
    // Find price range
    double maxPrice = high[0];
